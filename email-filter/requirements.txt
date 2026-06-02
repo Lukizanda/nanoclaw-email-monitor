@@ -1,0 +1,7 @@
+mcp>=1.27.0
+langchain-ollama>=1.1.0
+langchain-core>=1.4.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+# Optional: uncomment to use Claude Haiku instead of Ollama
+# langchain-anthropic>=1.4.0
