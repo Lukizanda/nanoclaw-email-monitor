@@ -5,6 +5,7 @@
 #   1. OneCLI credential vault (Docker)
 #   2. LangChain email classifier MCP server (Python, port 8765)
 #   3. NanoClaw host (Node.js)
+#   4. Ensure the recurring email-check schedule (idempotent re-seed)
 
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
 $OneCLICompose = "$env:USERPROFILE\.onecli\docker-compose.yml"
@@ -12,7 +13,7 @@ $OneCLICompose = "$env:USERPROFILE\.onecli\docker-compose.yml"
 Write-Host "Starting NanoClaw services..." -ForegroundColor Cyan
 
 # --- 1. OneCLI ---
-Write-Host "`n[1/3] Starting OneCLI credential vault..." -ForegroundColor Yellow
+Write-Host "`n[1/4] Starting OneCLI credential vault..." -ForegroundColor Yellow
 if (Test-Path $OneCLICompose) {
     docker compose -p onecli -f $OneCLICompose up -d
     if ($LASTEXITCODE -eq 0) {
@@ -43,7 +44,7 @@ for ($i = 1; $i -le 15; $i++) {
 }
 
 # --- 2. LangChain MCP Server ---
-Write-Host "`n[2/3] Starting LangChain email classifier MCP server (port 8765)..." -ForegroundColor Yellow
+Write-Host "`n[2/4] Starting LangChain email classifier MCP server (port 8765)..." -ForegroundColor Yellow
 $ServerScript = Join-Path $ProjectRoot "email-filter\server.py"
 if (Test-Path $ServerScript) {
     Start-Process -FilePath "python" -ArgumentList $ServerScript `
@@ -57,7 +58,7 @@ if (Test-Path $ServerScript) {
 }
 
 # --- 3. NanoClaw Host ---
-Write-Host "`n[3/3] Starting NanoClaw host..." -ForegroundColor Yellow
+Write-Host "`n[3/4] Starting NanoClaw host..." -ForegroundColor Yellow
 $LogDir = Join-Path $ProjectRoot "logs"
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out-Null }
 
@@ -72,6 +73,23 @@ Start-Process -FilePath $pnpmCmd -ArgumentList "run", "dev" `
     -RedirectStandardError  (Join-Path $LogDir "nanoclaw.error.log")
 
 Write-Host "      NanoClaw host started (logs: logs/nanoclaw.log)" -ForegroundColor Green
+
+# --- 4. Ensure the recurring email-check schedule exists ---
+# The schedule is a kind=task row in the session's inbound.db; if the session
+# was ever rebuilt or data wiped, the row is gone. This idempotently re-seeds it
+# into the agent group's CURRENT active session. No-op if already present.
+# See wiki/schedule-durability.md.
+Write-Host "`n[4/4] Ensuring recurring email-check schedule..." -ForegroundColor Yellow
+Start-Sleep -Seconds 6   # let the host finish DB init / migrations
+Push-Location $ProjectRoot   # pnpm exec must resolve tsx from the project root
+try {
+    & $pnpmCmd exec tsx scripts/ensure-schedule.ts 2>&1 | ForEach-Object { Write-Host "      $_" }
+    Write-Host "      Schedule ensured." -ForegroundColor Green
+} catch {
+    Write-Host "      WARNING: ensure-schedule failed: $_" -ForegroundColor Yellow
+} finally {
+    Pop-Location
+}
 
 Write-Host "`nAll services started." -ForegroundColor Cyan
 Write-Host ""

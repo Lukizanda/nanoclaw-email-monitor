@@ -3,7 +3,7 @@
 Catalog of all pages. Updated on every session.
 
 **Last updated:** 2026-06-03
-**Total pages:** 14
+**Total pages:** 16
 
 ---
 
@@ -12,7 +12,8 @@ Catalog of all pages. Updated on every session.
 | Page | Summary |
 |------|---------|
 | [[overview]] | Project goals, family use case, current build status |
-| [[architecture]] | End-to-end system design, components, data flow, isolation boundaries |
+| [[architecture]] | End-to-end system design, components, data flow, isolation boundaries (static view) |
+| [[email-monitor-trigger-flow]] | Dynamic view: how a scheduled wake fires the agent, the explicit-command method that makes it run the check, recurrence, verified trace |
 | [[decisions]] | Technology decisions with rationale and trade-offs |
 
 ## Components
@@ -32,6 +33,7 @@ Catalog of all pages. Updated on every session.
 |------|---------|
 | [[running]] | Startup runbook — the 4 services, start order, health checks, log locations, debugging |
 | [[windows-setup-issues]] | Every problem hit on Windows (CRLF, Docker, WSL, pnpm, stale containers) and its fix |
+| [[schedule-durability]] | Why the schedule can vanish on session rebuild, and the idempotent `ensure-schedule.ts` re-seed wired into startup |
 | [[gmail-integration-issues]] | Runtime/integration headaches: SSE-classify hang, processing_ack poison, Ollama no_think, agent adherence, poll-loop wedge, Gmail-via-proxy, drain→windowed pivot |
 
 ## Meta

@@ -4,7 +4,11 @@
 > components, and boundaries.
 
 **Last updated:** 2026-06-03
-**Related:** [[nanoclaw]], [[langchain-filter]], [[mcp]], [[overview]], [[gmail-integration-issues]]
+**Related:** [[nanoclaw]], [[langchain-filter]], [[mcp]], [[overview]], [[gmail-integration-issues]], [[email-monitor-trigger-flow]]
+
+> This page is the **static** view (components, data flow, boundaries). For the
+> **dynamic** runtime — how a scheduled wake fires the agent, how we make it run
+> the check, and how recurrence works — see [[email-monitor-trigger-flow]].
 
 ## Design principle
 

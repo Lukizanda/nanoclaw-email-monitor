@@ -164,3 +164,20 @@ overview, decisions (ADR-style supersede + 3 new decisions), email-classificatio
 running. Stale "agent calls classify_emails over SSE every 30 min / LangChain
 polls Gmail and writes inbound.db" claims removed; MCP path marked retired in
 favour of HTTP `/classify` + `check_inbox.ts`.
+
+**Schedule wired + page added (later same day):** Inserted a recurring `kind=task`
+(cron `0 */5 * * *`, Asia/Singapore) that triggers `check_inbox.ts` via an
+explicit-command prompt (option B). Verified end-to-end: fired → fresh container →
+agent ran the script → 1 important of 7 delivered to Telegram → recurrence advanced
+(no re-fire). New wiki page **email-monitor-trigger-flow** documents the wake →
+fresh-session → explicit-command-Bash → recurrence flow + the verified trace.
+**Pages created:** email-monitor-trigger-flow.
+
+**Schedule durability (later same day):** Realised the schedule is a single
+`kind=task` row in the session's `inbound.db` — lost if the session is rebuilt /
+data wiped. Built **`scripts/ensure-schedule.ts`**: idempotent re-seed into the
+agent group's *current active* session (looks up agent group by stable `folder`,
+`findSessionByAgentGroup`, derives Telegram route from the messaging group,
+`insertTask` with cron). Wired into `start-all.ps1` as step [4/4] so every
+startup re-asserts the schedule. Verified both idempotent (no-op) and seed
+(delete → re-create) paths. **Pages created:** schedule-durability.
