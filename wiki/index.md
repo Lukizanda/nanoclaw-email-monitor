@@ -3,7 +3,7 @@
 Catalog of all pages. Updated on every session.
 
 **Last updated:** 2026-06-02
-**Total pages:** 12
+**Total pages:** 13
 
 ---
 
@@ -24,6 +24,7 @@ Catalog of all pages. Updated on every session.
 | [[mcp]] | Model Context Protocol — what it is, FastMCP, our custom classifier server, wiring |
 | [[langchain-filter]] | Python LangChain MCP server — LCEL chains, two-stage classification, model fallback |
 | [[email-classification]] | Classification criteria, prompts, notification format, edge cases |
+| [[telegram-flow]] | How Telegram messaging works — long polling, outbound-only, chat ID, polling vs webhooks |
 
 ## Operations
 
