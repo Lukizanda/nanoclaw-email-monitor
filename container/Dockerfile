@@ -23,6 +23,7 @@ ARG CLAUDE_CODE_VERSION=2.1.116
 ARG AGENT_BROWSER_VERSION=latest
 ARG VERCEL_VERSION=latest
 ARG BUN_VERSION=1.3.12
+ARG GMAIL_MCP_VERSION=1.1.11
 
 # ---- System dependencies -----------------------------------------------------
 # tini: correct PID 1 / signal forwarding so outbound.db writes finalize on
@@ -103,6 +104,16 @@ RUN --mount=type=cache,target=/root/.cache/pnpm \
 
 RUN --mount=type=cache,target=/root/.cache/pnpm \
     pnpm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+# Gmail MCP server (stdio) — reads OneCLI credential stubs; the gateway injects
+# the real OAuth token for gmail.googleapis.com calls. zod-to-json-schema is
+# pinned to a pre-v3-subpath version: gmail-mcp's loose dep otherwise resolves
+# to 3.25.x which imports zod/v3 (only in zod>=3.25) while zod resolves to
+# 3.24.x → ERR_PACKAGE_PATH_NOT_EXPORTED. Re-check this pin if bumping the MCP.
+RUN --mount=type=cache,target=/root/.cache/pnpm \
+    pnpm install -g \
+        "@gongrzhe/server-gmail-autoauth-mcp@${GMAIL_MCP_VERSION}" \
+        "zod-to-json-schema@3.22.5"
 
 # pnpm creates a Windows-style .exe cmd-shim for claude on Windows hosts.
 # Use the Node.js cli-wrapper.cjs fallback instead — it works on all platforms

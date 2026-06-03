@@ -43,3 +43,6 @@ agents-sdk-docs
 # Python bytecode cache
 __pycache__/
 *.pyc
+
+# Obsidian vault config (wiki opened as vault)
+wiki/.obsidian/
