@@ -1,4 +1,12 @@
-# Email Monitor Agent — Build Plan
+# Email Monitor Agent — Build Plan  ⟳ SUPERSEDED (v1, historical)
+
+> ⚠️ **This is the original v1 plan, kept for history.** The implementation has
+> since diverged substantially — the agent no longer orchestrates the check, the
+> classifier is a separate LangChain service called over HTTP, classification runs
+> on local Ollama (not Haiku), the schedule is ~5h (not 30 min), and a windowed
+> "last 6h" check replaced any backlog polling. **See `EMAIL_MONITOR_PLAN_V2.md`
+> for the current plan and the reasons each of these changed.** Read this only to
+> understand where the project started.
 
 ## Overview
 

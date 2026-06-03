@@ -3,8 +3,8 @@
 > Criteria, prompt design, and category definitions for deciding which emails
 > require a family member's personal attention.
 
-**Last updated:** 2026-06-02
-**Related:** [[langchain-filter]], [[overview]]
+**Last updated:** 2026-06-03
+**Related:** [[langchain-filter]], [[overview]], [[architecture]]
 
 ## Classification Categories
 
@@ -70,17 +70,17 @@ Respond with JSON:
 
 ## Notification Format (Telegram)
 
-When the NanoClaw agent sends a Telegram notification:
+The agent relays each important email from `check_inbox.ts` in this format (from
+`CLAUDE.local.md`), batching multiple into one message:
 
 ```
-Important email from {sender_name} <{sender_email}>
-Subject: {subject}
-Action: {action_type} ({urgency})
-
-{summary}
-
-Want me to draft a reply?
+📬 <action_type emoji> <sender name>
+Subject: <subject>
+<2–3 sentence summary of what action is needed>
+Urgency: <high|medium|low>
 ```
+
+Action-type emojis: payment 💳 · meeting 📅 · job 💼 · reply ✉️ · urgent ⏰
 
 ## Edge Cases and Tuning Notes
 
@@ -101,14 +101,20 @@ Want me to draft a reply?
 
 ## Gmail Pre-Filter Query
 
-Before LangChain even runs, use Gmail's own filter to narrow the fetch:
+`check_inbox.ts` narrows the fetch with Gmail's own search before anything is
+classified — this is the windowing + dedup layer:
 
-```python
-query = "is:unread -in:spam -category:promotions -category:social"
+```
+is:unread after:<epoch of now-6h> -label:BooTuna/seen
 ```
 
-This removes obvious spam and social notifications before Claude sees them,
-reducing token usage and classification noise.
+- `is:unread` — only mail the user hasn't seen
+- `after:<epoch>` — last ~6h only (Gmail's `newer_than:` has no hour unit, so we
+  use an epoch timestamp; see [[gmail-integration-issues]] #9)
+- `-label:BooTuna/seen` — skip anything already checked (dedup across the
+  overlapping schedule)
+
+Spam/promotions are already excluded by `is:unread` + the Stage 1 junk/ad filter.
 
 ## Per-Person Criteria
 
@@ -118,5 +124,9 @@ Each family member's NanoClaw `CLAUDE.md` can extend the base criteria:
 **Wife:** could add school-related emails, medical appointments
 **Kids:** could add gaming/hobby platform emails they care about
 
-The LangChain Stage 1/2 uses shared prompts. Per-person customization happens
-at the NanoClaw agent layer (final formatting and additional filtering in `CLAUDE.md`).
+The LangChain Stage 1/2 currently uses shared prompts, and the agent no longer
+does any filtering of its own (the script + classifier decide importance). So
+per-person customization would live in the classifier (e.g. per-group prompt
+variants, a VIP-sender rules runnable — see [[langchain-filter]] "Extending the
+chain") rather than in the agent's `CLAUDE.md`. Not yet implemented — only Alex
+is wired today.

@@ -16,6 +16,8 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 from classifier import build_chains, run_pipeline
 
 # Load optional overrides from the parent project's .env
@@ -80,6 +82,29 @@ def classify_emails(emails: list[dict]) -> dict:
         "classified": len(capped),
         "skipped": max(0, len(emails) - len(capped)),
     }
+
+
+@mcp.custom_route("/classify", methods=["POST"])
+async def classify_http(request: Request) -> JSONResponse:
+    """
+    Plain-HTTP twin of the classify_emails MCP tool.
+
+    Lets a deterministic orchestrator (the container-side drain_inbox script)
+    POST a batch of emails and get the importance verdict back as JSON, without
+    speaking MCP. Body: {"emails": [{sender, subject, body_preview}, ...]}.
+    Same per-call cap and return shape as classify_emails.
+    """
+    body = await request.json()
+    emails = body.get("emails", [])
+    capped = emails[:MAX_EMAILS_PER_CALL]
+    important = run_pipeline(capped, stage1_chain, stage2_chain)
+    return JSONResponse(
+        {
+            "important": important,
+            "classified": len(capped),
+            "skipped": max(0, len(emails) - len(capped)),
+        }
+    )
 
 
 if __name__ == "__main__":

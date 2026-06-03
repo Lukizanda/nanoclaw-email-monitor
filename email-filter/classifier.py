@@ -60,6 +60,12 @@ def build_chains(ollama_model: str = "qwen3:8b", anthropic_api_key: str | None =
             model=ollama_model,
             format="json",
             temperature=0,
+            # qwen3 is a reasoning model: by default it emits a long hidden
+            # <think>…</think> monologue before the JSON answer, which on a
+            # partial-CPU 8B model costs ~30-60s/email. reasoning=False maps to
+            # Ollama's `think: false` — skip the monologue and answer directly.
+            # Classification is a simple labelling task that doesn't need it.
+            reasoning=False,
         )
 
     stage1 = STAGE1_PROMPT | model | JsonOutputParser()

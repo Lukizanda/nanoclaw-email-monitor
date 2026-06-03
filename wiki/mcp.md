@@ -3,8 +3,16 @@
 > The protocol NanoClaw uses to give agents access to external tools — and how
 > we implemented a custom Python MCP server for email classification.
 
-**Last updated:** 2026-06-02
-**Related:** [[langchain-filter]], [[architecture]], [[nanoclaw]]
+**Last updated:** 2026-06-03
+**Related:** [[langchain-filter]], [[architecture]], [[nanoclaw]], [[gmail-integration-issues]]
+
+> ⚠️ **Status:** The email monitor **no longer uses the MCP/SSE path.** The agent
+> kept improvising over the MCP tool, and the long SSE classify call hung on slow
+> Ollama (see [[gmail-integration-issues]] #2, #6). The monitor now calls a plain
+> **HTTP `POST /classify`** endpoint from the deterministic `check_inbox.ts`
+> script. The `classify_emails` MCP tool still exists in `server.py` but nothing
+> calls it. This page is kept as the **MCP learning reference** and a record of
+> how it was wired; the live path is HTTP (see "The live path" below).
 
 ## What MCP Is
 
@@ -77,37 +85,46 @@ Three things happen automatically:
 - **Description** — the docstring becomes the tool description the agent reads
   to decide when and how to call it
 
-## The Full Call Chain
+## The live path (HTTP, not MCP)
+
+Today the classifier is reached over a plain HTTP endpoint by `check_inbox.ts`,
+not over MCP by the agent:
 
 ```
-NanoClaw host sweep fires
+NanoClaw scheduler fires (every 5h) → agent runs `bun check_inbox.ts`
     │
     ▼
-Docker container wakes (agent group: Alex)
+check_inbox.ts (Bun, in container)
+    │  Gmail REST (via OneCLI proxy) → unread, last 6h, not yet labelled
     │
+    ├──► POST http://host.docker.internal:8765/classify   ◄── plain HTTP, no MCP
+    │        {emails:[{sender, subject, body_preview}, ...]}
+    │        → server.py custom_route → run_pipeline() → Ollama
+    │        ◄ {important:[{...email, action_type, summary, urgency}], ...}
+    │
+    └──► label BooTuna/seen, print JSON
     ▼
-Claude (agent) runs
-    │  reads CLAUDE.md instructions
-    │  decides: "I need to check Gmail and classify emails"
-    │
-    ├──► Gmail MCP tool (built-in NanoClaw)
-    │        fetches emails since last poll
-    │        returns list of email dicts
-    │
-    ├──► classify_emails MCP tool (our server)
-    │        POST http://host.docker.internal:8765/sse
-    │        payload: [{sender, subject, body_preview}, ...]
-    │        → FastMCP routes to classify_emails()
-    │        → run_pipeline() runs Stage 1 + Stage 2 via LangChain
-    │        → Ollama/Haiku classifies each email
-    │        response: [{...email, action_type, summary, urgency}, ...]
-    │
-    ▼
-Claude formats notification message
-    │  "Important email from billing@acme.com..."
-    ▼
-NanoClaw channel adapter → Telegram
+agent relays `important` → outbound.db → Telegram
 ```
+
+Why HTTP and not MCP here: `check_inbox.ts` is a plain script, not an LLM agent —
+it can't easily speak MCP's JSON-RPC-over-SSE handshake, but a `fetch()` POST is
+trivial. MCP is the door for *agents*; `/classify` is the door for *code*. Both
+sit in front of the same `run_pipeline()`.
+
+### The original MCP call chain (historical — retired)
+
+```
+host sweep → container wakes → Claude reads CLAUDE.md → decides to classify
+    ├──► Gmail MCP tool → fetch emails
+    ├──► classify_emails MCP tool (SSE) → host.docker.internal:8765/sse → run_pipeline
+    ▼
+Claude formats → Telegram
+```
+
+This is what the rest of this page documents. It worked, but the agent was an
+unreliable orchestrator and the long SSE call was fragile — hence the move to the
+HTTP path above. Kept here as a reference for how MCP wiring works.
 
 ## Starting the Server
 
@@ -144,27 +161,30 @@ Override the Ollama model via `.env`:
 EMAIL_FILTER_MODEL=llama3.2:3b
 ```
 
-## Wiring to NanoClaw Agent Group
+## Wiring to NanoClaw Agent Group (how it *was* wired)
 
 MCP servers are registered per agent group in `groups/<folder>/container.json`
 under `mcpServers`. The agent-runner reads this and passes it to the Claude
-Agent SDK at query time.
+Agent SDK at query time. The classifier *was* registered like this:
 
 ```jsonc
-// groups/dm-with-alex-emailmonitor/container.json
+// historical — this entry has since been REMOVED
 {
   "mcpServers": {
-    "email-classifier": {
-      "type": "sse",
-      "url": "http://host.docker.internal:8765/sse"
-    }
+    "email-classifier": { "type": "sse", "url": "http://host.docker.internal:8765/sse" }
   }
 }
 ```
 
-`host.docker.internal` lets the container reach the Python server running on the
-host. The agent sees `classify_emails` in its tool list automatically (from the
-tool's docstring + schema).
+**Current state:** `mcpServers` is now **empty** (`{}`). The `email-classifier`
+(and `gmail`) MCP servers were removed so the agent has no email tools to
+improvise with — its only email path is running `check_inbox.ts`, which calls
+`/classify` over HTTP. See [[gmail-integration-issues]] #6.
+
+```jsonc
+// groups/dm-with-alex-emailmonitor/container.json (now)
+{ "mcpServers": {} }
+```
 
 ### Gotcha: agent-runner needed an SSE/HTTP patch
 

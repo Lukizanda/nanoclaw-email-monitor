@@ -1,25 +1,31 @@
-# LangChain Pre-Filter
+# LangChain Classifier
 
-> Python LangChain MCP server that classifies emails inside the NanoClaw agent
-> flow — exposed as an MCP tool that Docker containers call via HTTP.
+> Python LangChain service that classifies emails for importance. Pure judgment:
+> emails in → important emails out. Reached over a plain HTTP endpoint.
 
-**Last updated:** 2026-06-02
-**Related:** [[architecture]], [[email-classification]], [[decisions]]
+**Last updated:** 2026-06-03
+**Related:** [[architecture]], [[mcp]], [[email-classification]], [[decisions]], [[gmail-integration-issues]]
 
 ## Role in the System
 
-The LangChain classifier runs as an always-on Python MCP server on the host
-machine (`email-filter/server.py`, port 8765). NanoClaw Docker containers call
-it via `host.docker.internal:8765` using the MCP protocol.
+The classifier runs as an always-on Python service on the host
+(`email-filter/server.py`, port 8765). It does **one thing**: take a list of
+emails and return the ones that matter, tagged with action type / summary /
+urgency. It is called by **`check_inbox.ts`** over plain HTTP:
 
-The agent orchestrates the full flow:
 ```
-NanoClaw Sweep → Docker Container
-    → Gmail MCP tool (fetch emails)
-    → classify_emails MCP tool (LangChain server)
-    → Claude Sonnet (format + notify)
-    → Telegram
+check_inbox.ts  ──POST /classify {emails:[...]}──▶  server.py → classifier.py (LCEL) → Ollama
+                ◀──────── {important:[...]} ────────
 ```
+
+What this service **does not** do (those live in `check_inbox.ts` — see
+[[architecture]]): fetch Gmail, window by time, label, dedup, schedule, or write
+any database. It has no knowledge of Gmail, NanoClaw, or Telegram. That clean
+boundary is the point — swap the model or rewrite the orchestrator and the other
+side doesn't care.
+
+(It also still exposes a `classify_emails` **MCP/SSE** tool, but nothing calls it
+anymore — the live path is HTTP `/classify`. See [[mcp]].)
 
 ## Two-Stage Chain
 
@@ -42,89 +48,66 @@ Classifies important emails by action type:
 - `reply` — personal email requiring direct response
 - `urgent` — explicit deadline, ASAP, time-sensitive language
 
-Also produces: a 2-3 sentence `summary` and an `urgency` level (high/medium/low).
+Also produces a 2-3 sentence `summary` and an `urgency` level (high/medium/low).
 
 ## LCEL Implementation
 
+The default model is **local Ollama** with reasoning disabled (a reasoning
+model's hidden monologue is pure overhead for a labelling task — see
+[[gmail-integration-issues]] #4). Claude Haiku is an optional swap if
+`ANTHROPIC_API_KEY` is set.
+
 ```python
-from langchain_anthropic import ChatAnthropic
+from langchain_ollama import ChatOllama
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 
-model = ChatAnthropic(model="claude-haiku-4-5-20251001")
+model = ChatOllama(model="qwen3:8b", format="json", temperature=0,
+                   reasoning=False)          # think:false → ~7s/email, not ~60s
+# or: ChatAnthropic(model="claude-haiku-4-5-...") when ANTHROPIC_API_KEY is set
 
-# Stage 1 chain
-filter_chain = filter_prompt | model | JsonOutputParser()
+stage1 = STAGE1_PROMPT | model | JsonOutputParser()   # coarse filter
+stage2 = STAGE2_PROMPT | model | JsonOutputParser()   # deep classify
 
-# Stage 2 chain
-deep_chain = deep_prompt | model | JsonOutputParser()
-
-# Full pipeline
-def poll_and_filter(emails):
-    # Batch Stage 1 — parallel API calls
-    results = filter_chain.batch(
-        [{"sender": e["sender"], "subject": e["subject"],
-          "body_preview": e["body"][:500]} for e in emails],
-        config={"max_concurrency": 5}
-    )
-    important = [e for e, r in zip(emails, results) if r["category"] == "important"]
-
-    # Stage 2 on important only
-    deep_results = deep_chain.batch(
-        [{"sender": e["sender"], "subject": e["subject"],
-          "body_preview": e["body"][:500]} for e in important],
-        config={"max_concurrency": 5}
-    )
-    return [{"email": e, "classification": r} for e, r in zip(important, deep_results)]
+def run_pipeline(emails, stage1, stage2):
+    s1 = stage1.batch([{...} for e in emails], config={"max_concurrency": 5})
+    important = [e for e, r in zip(emails, s1) if r["category"] == "important"]
+    if not important:
+        return []
+    s2 = stage2.batch([{...} for e in important], config={"max_concurrency": 5})
+    return [{**e, **r} for e, r in zip(important, s2)]   # action_type/summary/urgency
 ```
+
+`run_pipeline()` is what both `/classify` (HTTP) and the legacy `classify_emails`
+(MCP) call.
 
 ## Key LCEL Concepts
 
 **`|` pipe operator** — composes Runnables left to right:
-`PromptTemplate | ChatAnthropic | JsonOutputParser`
-Each step transforms the data and passes it to the next.
+`PromptTemplate | model | JsonOutputParser`. Each step transforms the data and
+passes it on. New behaviour = slot in another Runnable (e.g. a `RunnableBranch`
+stage-3 extractor, or `.with_fallbacks([...])` for Ollama→Haiku).
 
-**`.batch()`** — runs the same chain on multiple inputs in parallel (async under
-the hood via `asyncio.gather`). Returns results in the same order as inputs.
-Cap concurrency with `config={"max_concurrency": N}` to avoid rate limits.
+**`.batch()`** — runs the chain on many inputs concurrently. Returns results in
+input order. Cap with `config={"max_concurrency": N}`. (Note: Ollama serialises
+requests on one GPU by default, so the real win is per-call speed, not parallelism.)
 
-**`.ainvoke()`** — async version of `.invoke()`. Used inside `.batch()` internally.
-Yields control while waiting on network I/O — this is where the parallelism comes from.
-
-## Multi-User Handling
-
-One script, multiple inboxes:
-
-```python
-FAMILY = [
-    {"name": "alex",  "gmail": "alex@example.com", "session_db": "..."},
-    {"name": "wife",  "gmail": "wife@gmail.com",       "session_db": "..."},
-    {"name": "kids",  "gmail": "kids@gmail.com",       "session_db": "..."},
-]
-
-async def poll_all():
-    await asyncio.gather(*[poll_member(m) for m in FAMILY])
-```
-
-Each member's results are written to their own NanoClaw `inbound.db`.
-No crossover — Alex never sees Wife's emails and vice versa.
-
-## Handoff to NanoClaw
-
-After filtering, the script writes to the session's `inbound.db`:
-
-```python
-conn.execute("""
-    INSERT INTO messages_in (seq, role, content, created_at)
-    VALUES (?, 'system', ?, ?)
-""", (next_odd_seq(conn), json.dumps(payload), datetime.utcnow().isoformat()))
-```
-
-Note: NanoClaw container uses **odd** seq numbers. Host uses even. This parity
-is load-bearing — do not use even seq numbers from the Python script.
+**`.ainvoke()`** — async `.invoke()`, used inside `.batch()`; yields on network I/O.
 
 ## Cost
 
-Claude Haiku (~$0.80/million input tokens) keeps costs very low.
-Estimated: $1-3/month for a typical family inbox load.
-Body is truncated to 500 chars for classification — saves tokens, still accurate.
+**Free by default** — local Ollama, no API spend. The trade-off is speed
+(~7s/email with `reasoning=False`; the model runs partly on CPU). Setting
+`ANTHROPIC_API_KEY` switches to Claude Haiku — near-instant, ~$1-3/month at a
+typical inbox load, but it bills the Anthropic API (separate from a Claude Max
+plan). Body is truncated to ~500 chars before classification.
+
+## Extending the chain
+
+Because every stage is a Runnable, you grow capability by adding runnables, not
+rewriting. Realistic additions: a `RunnableBranch` stage-3 that extracts
+structured detail per action_type (amount/due-date for payments, time/place for
+meetings), a rules pre-filter that short-circuits VIP senders before the LLM, or
+`.with_fallbacks([ChatAnthropic(...)])` so an Ollama failure transparently retries
+on Haiku. The HTTP contract (`/classify`) stays identical, so `check_inbox.ts`
+never changes.

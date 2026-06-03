@@ -73,7 +73,12 @@ Leave it running, or detach it:
 Start-Process python -ArgumentList "server.py" -WorkingDirectory (Resolve-Path .) -WindowStyle Hidden `
   -RedirectStandardOutput ..\logs\mcp-server.out.log -RedirectStandardError ..\logs\mcp-server.err.log
 ```
-Expected stderr on startup: `Uvicorn running on http://0.0.0.0:8765`.
+Expected stderr on startup: `Uvicorn running on http://0.0.0.0:8765`. Also check
+**stdout** for which model it picked — `falling back to Ollama model: qwen3:8b`
+(free/local) vs `Using Claude Haiku`. An `ANTHROPIC_API_KEY` in `.env` silently
+flips it to Haiku; `load_dotenv` won't override an ambient env value, so clear it
+per-process (`$env:ANTHROPIC_API_KEY=""`) if you intend Ollama. This serves both
+the `/classify` HTTP endpoint (used by `check_inbox.ts`) and the legacy MCP tool.
 
 ### 5. NanoClaw host
 ```powershell
@@ -125,7 +130,8 @@ Get-Content logs\nanoclaw.err.log -Wait -Tail 20
 | OneCLI containers not listed | Compose not started | Re-run the `docker compose ... up -d` line |
 | `Start-Process pnpm` → "not a valid Win32 application" | Bare `pnpm` isn't an exe | Use `pnpm.cmd` (start-all.ps1 already does) |
 | `FastMCP.run() got unexpected kwarg 'host'` | Old API call | host/port go on the `FastMCP(...)` constructor, not `run()` |
-| Agent "types" forever, no reply | classify_emails waiting on Ollama (cold + local) | Normal on first call — wait. Persistent → check MCP server + Ollama up |
+| Agent "types" forever, no reply | `check_inbox.ts`'s `/classify` call waiting on Ollama (cold + local) | Normal on first call — wait. Persistent → check MCP server + Ollama up |
+| Warm container stops responding to new messages | Pre-fix poll-loop wedge (open query blocked the loop) | Fixed in `poll-loop.ts`; if it recurs, `docker rm -f` the container and let the host respawn (see [[gmail-integration-issues]] #7) |
 | `claude native binary not found` | Container image issue | Rebuild via `scripts/build-container.ps1` (see [[windows-setup-issues]] #9/#10) |
 | Stale containers using old source | Containers spawned before a source edit | `docker ps`, kill them, restart NanoClaw (see [[windows-setup-issues]] #11) |
 | `listen EACCES ... cli.sock` | CLI Unix socket on Windows | **Harmless** — ignore (see [[windows-setup-issues]] #15) |

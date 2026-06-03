@@ -266,10 +266,10 @@ async function processQuery(
 ): Promise<QueryResult> {
   let queryContinuation: string | undefined;
   let done = false;
-  // Once we've asked the active query to end (to let a pending scheduled task
-  // run as a fresh turn), don't keep calling end() every poll tick while the
-  // SDK winds the current turn down — it just spams the log.
-  let endedForTask = false;
+  // Once we've asked the active query to end (to hand a pending /clear or
+  // scheduled task back to the main loop), don't keep calling end() every poll
+  // tick while the SDK winds the current turn down — it just spams the log.
+  let endedForHandoff = false;
 
   // Concurrent polling: push follow-ups into the active query as they arrive.
   // We do NOT force-end the stream on silence — keeping the query open is
@@ -279,30 +279,35 @@ async function processQuery(
   // will kill the container and messages get reset to pending.
   const pollHandle = setInterval(() => {
     if (done) return;
+    // Keep the heartbeat fresh while the turn is open. The main loop is parked
+    // in `await processQuery` until this query ends, and an idle interactive
+    // turn (kept open for cheap follow-up pushes) emits no events — so without
+    // this touch the heartbeat freezes after every reply and a healthy,
+    // waiting container looks dead. Genuinely hung queries are caught
+    // host-side via processing-claim age, not by this heartbeat.
+    touchHeartbeat();
 
-    // Skip system messages (MCP tool responses) and /clear (needs fresh query).
     // Thread routing is the router's concern — if a message landed in this
-    // session, the agent should see it. Per-thread sessions already isolate
-    // threads into separate containers; shared sessions intentionally merge
-    // everything. Filtering on thread_id here caused deadlocks when the
-    // initial batch and follow-ups had mismatched thread_ids (e.g. a
-    // host-generated welcome trigger with null thread vs a Discord DM reply).
-    const newMessages = getPendingMessages().filter((m) => {
-      if (m.kind === 'system') return false;
-      if ((m.kind === 'chat' || m.kind === 'chat-sdk') && isClearCommand(m)) return false;
-      return true;
-    });
-    if (newMessages.length === 0) return;
+    // session, the agent should see it. (Filtering on thread_id here caused
+    // deadlocks when the initial batch and follow-ups had mismatched threads.)
+    const pending = getPendingMessages().filter((m) => m.kind !== 'system');
+    if (pending.length === 0) return;
 
-    // Scheduled tasks (kind='task') must NOT be absorbed as fire-and-forget
-    // follow-up pushes. The push path marks them completed immediately
-    // (below), which for a periodic task means the recurrence advances even
-    // though the agent never actually ran the routine in this already-active
-    // turn. Leave task rows pending and end the current query so the main
-    // loop picks them up as a fresh, awaited query that runs to completion.
-    // Interactive chat follow-ups still push into the live turn as before.
-    const followUps = newMessages.filter((m) => m.kind !== 'task');
-    const hasPendingTask = newMessages.some((m) => m.kind === 'task');
+    // Two kinds of pending work can't ride along the open turn and must be
+    // handed back to the main loop by ENDING the current query:
+    //   - /clear: resets the continuation, which only the main loop does. The
+    //     push path can't, and silently skipping it (the old behaviour) left
+    //     the /clear pending forever while the main loop stayed parked here —
+    //     the container went deaf to all further messages until it was killed.
+    //   - scheduled tasks (kind='task'): must run as a fresh, awaited turn.
+    //     Pushing them marks them completed immediately, so a periodic task's
+    //     recurrence would advance without the routine ever running.
+    // Everything else is an interactive follow-up — push it into the live turn
+    // (cheaper than close+reopen: warm prompt cache, no reconnect).
+    const isClear = (m: MessageInRow) =>
+      (m.kind === 'chat' || m.kind === 'chat-sdk') && isClearCommand(m);
+    const followUps = pending.filter((m) => m.kind !== 'task' && !isClear(m));
+    const needsHandoff = pending.some((m) => m.kind === 'task' || isClear(m));
 
     if (followUps.length > 0) {
       const newIds = followUps.map((m) => m.id);
@@ -315,10 +320,10 @@ async function processQuery(
       markCompleted(newIds);
     }
 
-    if (hasPendingTask && !endedForTask) {
-      // Don't markProcessing — leave the task pending for the main loop.
-      endedForTask = true;
-      log('Scheduled task pending — ending active query so it runs as a fresh turn');
+    if (needsHandoff && !endedForHandoff) {
+      // Don't markProcessing — leave these pending so the main loop owns them.
+      endedForHandoff = true;
+      log('Pending /clear or scheduled task — ending active query so the main loop handles it');
       query.end();
     }
   }, ACTIVE_POLL_INTERVAL_MS);

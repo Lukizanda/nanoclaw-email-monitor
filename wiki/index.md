@@ -2,8 +2,8 @@
 
 Catalog of all pages. Updated on every session.
 
-**Last updated:** 2026-06-02
-**Total pages:** 13
+**Last updated:** 2026-06-03
+**Total pages:** 14
 
 ---
 
@@ -32,6 +32,7 @@ Catalog of all pages. Updated on every session.
 |------|---------|
 | [[running]] | Startup runbook — the 4 services, start order, health checks, log locations, debugging |
 | [[windows-setup-issues]] | Every problem hit on Windows (CRLF, Docker, WSL, pnpm, stale containers) and its fix |
+| [[gmail-integration-issues]] | Runtime/integration headaches: SSE-classify hang, processing_ack poison, Ollama no_think, agent adherence, poll-loop wedge, Gmail-via-proxy, drain→windowed pivot |
 
 ## Meta
 

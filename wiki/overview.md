@@ -3,16 +3,20 @@
 > A self-hosted, multi-user email monitoring agent that watches Gmail inboxes and
 > sends Telegram notifications when emails require personal attention.
 
-**Last updated:** 2026-06-02
-**Related:** [[architecture]], [[decisions]], [[email-classification]]
+**Last updated:** 2026-06-03
+**Related:** [[architecture]], [[decisions]], [[email-classification]], [[gmail-integration-issues]]
 
 ## Goal
 
 Build an always-on agent running on a home desktop that:
-1. Polls each family member's Gmail inbox every 30 minutes
-2. Pre-filters junk, ads, and newsletters (Python LangChain)
-3. Deep-classifies remaining emails (Claude Haiku via NanoClaw)
+1. Checks each family member's Gmail for **unread mail from the last ~6 hours**
+   (windowed, not a backlog drain), on a schedule (~every 5 hours)
+2. Pre-filters junk, ads, and newsletters (Python LangChain, Stage 1)
+3. Deep-classifies remaining emails (local Ollama by default; Haiku optional)
 4. Sends a Telegram notification with a summary when action is required
+
+The check itself is a deterministic script (`check_inbox.ts`); the agent only
+triggers it and relays the result. See [[architecture]].
 
 ## Users
 
@@ -38,17 +42,22 @@ See [[email-classification]] for the full prompt design.
 
 ## Current Status
 
-**Phase:** Pre-build (planning complete, nothing initialized)
+**Working end-to-end for Alex, via the deterministic `check_inbox.ts` path.**
+The full chain is built and verified by running the script in-container.
 
-- [ ] Phase 1 — Foundation (pnpm install, .env, first run)
-- [ ] Phase 2 — OneCLI credential vault
-- [ ] Phase 3 — Gmail MCP tool
-- [ ] Phase 4 — Telegram channel
-- [ ] Phase 5 — Agent configuration + schedule
-- [ ] Phase 6 — Testing and tuning
-- [ ] Phase 7 — Optional enhancements
+- [x] Phase 1 — Foundation (pnpm, .env, container image, first run)
+- [x] Phase 2 — OneCLI credential vault (Anthropic + Gmail tokens)
+- [x] Phase 3 — Gmail access (now via REST through the OneCLI proxy, not gmail-mcp)
+- [x] Phase 4 — Telegram channel (BooTunaBot, paired DM)
+- [x] Phase 5 — Classification + `check_inbox.ts` orchestration (windowed, label-dedup)
+- [~] Phase 6 — Testing / tuning: script verified via `docker exec`; **still to do:**
+      wire the every-5h schedule and confirm the agent runs it reliably
+- [ ] Phase 7 — Additional family members (Wife, Kids)
 
-See `EMAIL_MONITOR_PLAN.md` in the repo root for full phase details.
+**Key architecture note:** orchestration was moved out of the LLM agent and into
+`check_inbox.ts` after the agent proved an unreliable orchestrator — see
+[[gmail-integration-issues]] for the full story. `EMAIL_MONITOR_PLAN.md` predates
+this pivot.
 
 ## Why NanoClaw
 

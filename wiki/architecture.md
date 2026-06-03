@@ -1,92 +1,111 @@
 # System Architecture
 
-> End-to-end design of the family email monitor: data flow, components, and boundaries.
+> End-to-end design of the email monitor as actually built: data flow,
+> components, and boundaries.
 
-**Last updated:** 2026-06-02
-**Related:** [[nanoclaw]], [[langchain-filter]], [[overview]]
+**Last updated:** 2026-06-03
+**Related:** [[nanoclaw]], [[langchain-filter]], [[mcp]], [[overview]], [[gmail-integration-issues]]
+
+## Design principle
+
+**The LLM does judgment; code does orchestration.** Classifying an email
+(judgment) lives in the Python/LangChain service. Finding mail, windowing,
+de-duping, and labelling (orchestration) lives in a deterministic script
+(`check_inbox.ts`). The agent's only job is to *run* that script and relay the
+result — it does not orchestrate anything itself. This split is the outcome of a
+long debugging session; see [[gmail-integration-issues]] for why.
 
 ## Data Flow
 
 ```
-NanoClaw Host Sweep (every 30 min)
-        │ wakes each agent group
+NanoClaw host — scheduled task fires every 5h (or a Telegram message arrives)
+        │ wakes the agent-group container
         ▼
-Docker Container (one per family member)
+Agent (Claude, in container)
+        │ runs ONE command:  bun /workspace/agent/check_inbox.ts
+        ▼
+check_inbox.ts  (Bun, deterministic orchestrator — in the container)
+        ├── Gmail REST API ───────────────► via OneCLI proxy (token injected)
+        │     search: is:unread after:<now-6h> -label:BooTuna/seen
+        │     fetch Subject/From/snippet for each
         │
-        ├── 1. Gmail MCP tool ──────────────────► Gmail API
-        │        fetch new emails since last poll
+        ├── POST /classify ──────────────► Python classifier (host :8765)
+        │     {emails:[...]}  (chunked ≤15)    server.py → classifier.py (LCEL)
+        │                                       Stage 1: junk/ad/newsletter/important
+        │                                       Stage 2: deep classify (important only)
+        │                                       ──► Ollama qwen3:8b (reasoning=False)
         │
-        ├── 2. classify_emails MCP tool ─────────► LangChain MCP Server
-        │        (host.docker.internal:8765)         (Python, port 8765)
-        │                                             Stage 1: junk/ad filter
-        │                                             Stage 2: deep classify
-        │                                             ──► Claude Haiku API
+        ├── apply label BooTuna/seen ─────► Gmail REST (dedup marker)
         │
-        └── 3. Claude Sonnet (agent)
-                 format notification
-                 ──► NanoClaw channel adapter
-                      ──► Telegram (Alex / Wife / Kids)
+        └── print JSON { checked, important:[...], window_hours }
+        ▼
+Agent relays the `important` list  ──► outbound.db
+        ▼
+NanoClaw host delivery poll  ──► Telegram (BooTunaBot)
 ```
+
+The agent never searches, classifies, or labels mail itself — it has no Gmail or
+classifier MCP tools (`container.json` → `mcpServers: {}`). Its sole email
+capability is running the script via Bash.
 
 ## Components
 
-### Python LangChain Filter (outside NanoClaw)
-- Runs as a scheduled Python script on the host machine
-- Polls Gmail via Google API every 30 minutes
-- Tracks last-poll timestamp to only fetch new emails
-- Stage 1: classifies as junk / ad / newsletter / important
-- Stage 2: deep-classifies important emails (payment / meeting / job / reply / urgent)
-- Writes important emails to each user's NanoClaw `inbound.db`
-- See [[langchain-filter]] for implementation details
+### Python LangChain Classifier (host, port 8765) — *judgment only*
+- `classifier.py`: two-stage LCEL pipeline (coarse junk/ad/newsletter/important →
+  deep classify). Model: Ollama `qwen3:8b` with `reasoning=False` by default
+  (Claude Haiku if `ANTHROPIC_API_KEY` is set).
+- `server.py`: exposes **`POST /classify`** (the live path) and a now-vestigial
+  `classify_emails` MCP/SSE tool. Holds the per-call cap.
+- Does **not** touch Gmail, labels, scheduling, or Telegram. See [[langchain-filter]].
+
+### `check_inbox.ts` (Bun, in the container) — *orchestration*
+- The deterministic email worker. Calls Gmail REST through the OneCLI proxy
+  (`Authorization: Bearer onecli-managed`, CA from `NODE_EXTRA_CA_CERTS`), so no
+  real credential ever enters the container.
+- Windowed model: only unread mail from the last `CHECK_WINDOW_HOURS` (default 6),
+  not already labelled `BooTuna/seen`. No backlog draining — old mail is ignored.
+- Calls `/classify`, applies the dedup label, prints one JSON object.
+- Lives in the group folder, live-mounted at `/workspace/agent/check_inbox.ts`.
 
 ### NanoClaw Host (Node.js)
-- Always-running service on the home desktop
-- Manages agent groups, session DBs, channel adapters
-- Wakes Docker containers when new messages arrive in `inbound.db`
-- Polls `outbound.db` and delivers via Telegram adapter
-- See [[nanoclaw]] for architecture details
+- Always-running service. Routes messages, runs the scheduler (fires the email
+  check every 5h), polls `outbound.db`, delivers via the Telegram adapter.
+- See [[nanoclaw]].
 
-### Docker Agent Containers (one per family member)
-- Isolated runtime (Bun) per agent group
-- Reads from `inbound.db`, writes to `outbound.db`
-- Runs Claude Haiku for final classification and notification formatting
-- Has access to MCP tools (Gmail for full body fetch if needed)
-- No access to other family members' session DBs
+### Agent Container (Bun, one per agent group)
+- Runs the LLM agent (`agent-runner`). For email, its only job is to run
+  `check_inbox.ts` and relay the result. Reads `inbound.db`, writes `outbound.db`.
 
 ### OneCLI Vault
-- Stores Gmail OAuth tokens securely
-- Injects credentials at request time — never in env vars or chat
-- Each family member has a separate credential entry
-- Tokens auto-refresh; no re-auth needed after initial setup
+- Injects the Gmail OAuth token at request time, matched by host pattern
+  (`gmail.googleapis.com`) and the per-agent auth token in the proxy URL.
+  `check_inbox.ts`'s REST calls get the token injected transparently. See [[onecli]].
 
 ### Session DBs (two per session)
-- `inbound.db` — LangChain filter writes, Docker container reads
-- `outbound.db` — Docker container writes, NanoClaw host reads
-- Single writer per file — no lock contention
-- Located at `data/v2-sessions/<session-id>/`
+- `inbound.db` — host writes, container reads.
+- `outbound.db` — container writes, host reads (also holds `processing_ack`).
+- Single writer per file. Located at `data/v2-sessions/<agent-group>/<session>/`.
 
 ## Boundaries
 
 | Boundary | What crosses it |
 |----------|----------------|
-| Gmail API → LangChain | Email metadata + body text (OAuth token via OneCLI) |
-| LangChain → inbound.db | Structured JSON: sender, subject, body, classification |
-| inbound.db → Docker container | Mounted SQLite file (read-only from container perspective) |
-| Docker container → outbound.db | Formatted notification message |
-| outbound.db → Telegram | Text message via Telegram Bot API |
+| Scheduler → agent | A `kind=task` wake ("run the check") |
+| Agent → `check_inbox.ts` | A Bash command |
+| `check_inbox.ts` → Gmail API | REST calls, OAuth token injected by OneCLI proxy |
+| `check_inbox.ts` → classifier | `POST /classify {emails:[...]}` → `{important:[...]}` (plain HTTP) |
+| Agent → `outbound.db` | The important-emails notification text |
+| `outbound.db` → Telegram | Text message via the host's Telegram adapter |
 
-## Isolation Model
+## Isolation Model (multi-user, by design)
 
-Each family member maps to one NanoClaw **agent group**:
-- Separate `CLAUDE.md` (custom classification criteria per person)
-- Separate Docker container (separate runtime, separate process)
-- Separate session DBs (no shared state)
-- Separate OneCLI credential (separate Gmail OAuth token)
-- Separate Telegram bot (separate notification channel)
-
-No family member can see another's emails or notifications.
+Each family member maps to one NanoClaw **agent group** — separate `CLAUDE.local.md`,
+container, session DBs, and OneCLI Gmail credential. No member can see another's
+mail or notifications. Currently only **Alex** (`dm-with-alex-emailmonitor`, persona
+BooTuna) is wired; additional members follow the same pattern. See
+[[overview]] for status.
 
 ## Diagram
 
-See `email-monitor-system.excalidraw` in the repo root for the visual diagram.
-Open with the Excalidraw VS Code extension or excalidraw.com.
+`email-monitor-system.excalidraw` in the repo root predates the `check_inbox.ts`
+redesign — treat this page as the source of truth until the diagram is refreshed.

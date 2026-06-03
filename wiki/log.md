@@ -109,3 +109,58 @@ Ollama → Telegram. Note: container→host SSE is slow on first call (Ollama co
 local model) — agent "types" for a while before replying; this is expected, not
 a hang. Remaining: /add-gmail-tool (real inbox), verify recurring */30 schedule.
 **Pages created:** overview, architecture, nanoclaw, langchain-filter, email-classification, decisions
+
+---
+
+## [2026-06-03] debug+redesign | Gmail end-to-end: fought the agent, moved orchestration into code
+
+**Type:** session
+**Summary:** Took the monitor from "wired" to "actually working." A chain of
+runtime headaches across Gmail/classifier/agent/scheduler, then an architecture
+pivot: stop making the LLM agent the orchestrator. Full writeup in
+[[gmail-integration-issues]].
+
+**What happened:**
+- **SSE classify hang (root cause found):** a slow (~15 min) Ollama classify
+  outlived the MCP SSE connection → result lost → agent hung forever. Heartbeat
+  froze. Not "just slow" — a transport correctness bug.
+- **processing_ack poison loop:** force-killing the hung container left a
+  `processing` claim (in outbound.db) → host-sweep killed every new spawn.
+  Cleared the claim + retired the message. Lesson: don't force-kill progressing
+  runs.
+- **Ollama speed:** `qwen3:8b` reasoning monologue = ~60s/email. `reasoning=False`
+  (no_think) → ~7s/email.
+- **Haiku flip:** `ANTHROPIC_API_KEY` in `.env` silently switched the classifier
+  off Ollama; `load_dotenv` won't override ambient env. Clear it per-process.
+- **Agent adherence (the big one):** even with explicit rules + fresh session +
+  removed tools, the agent would not run the bounded procedure — it improvised a
+  freeform whole-inbox classify, or claimed "tools disconnected." 
+- **Poll-loop wedge fixed:** warm containers went deaf because an open
+  interactive query blocked the main loop and `/clear` had no path to end it.
+  Generalised the task-handoff to also end the query for `/clear`; touch
+  heartbeat in the poll interval. `poll-loop.ts`.
+- **Architecture pivot:** moved all orchestration into a deterministic Bun script
+  (`check_inbox.ts`) that does Gmail REST (via the OneCLI proxy, `Bearer
+  onecli-managed`) → HTTP `/classify` (added a `custom_route` to server.py) →
+  dedup label. Agent reduced to "run one command, relay result." Removed the
+  gmail/classifier MCP servers (`mcpServers: {}`) so there's nothing to improvise
+  with.
+- **Requirement pivot:** dropped the "drain the whole backlog" model for a simple
+  **windowed check** — unread mail from the last 6h (`after:<epoch>`; Gmail
+  `newer_than` has no hour unit), `BooTuna/seen` label only for overlap dedup.
+  Target schedule: every 5h.
+
+**Decisions:** keep LangChain (extensibility — add runnables later, e.g. a
+RunnableBranch stage-3 extractor); stay on free Ollama with no_think; split
+judgment (LLM/LangChain) from orchestration (code).
+
+**State:** `check_inbox.ts` verified working via `docker exec`. Still to do: wire
+the every-5h schedule with an explicit-command task prompt; confirm the agent
+runs it reliably (else have the script self-deliver).
+
+**Pages created:** gmail-integration-issues
+**Pages synced to the new architecture:** architecture, mcp, langchain-filter,
+overview, decisions (ADR-style supersede + 3 new decisions), email-classification,
+running. Stale "agent calls classify_emails over SSE every 30 min / LangChain
+polls Gmail and writes inbound.db" claims removed; MCP path marked retired in
+favour of HTTP `/classify` + `check_inbox.ts`.

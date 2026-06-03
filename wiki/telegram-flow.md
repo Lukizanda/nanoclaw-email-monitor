@@ -59,7 +59,7 @@ Two identifiers do the work:
 | Identifier | Where it lives | Role |
 |-----------|----------------|------|
 | **Bot token** | `.env` (`TELEGRAM_BOT_TOKEN`) | Authenticates *which bot* on every Telegram API call |
-| **Chat ID** | `data/v2.db` (`telegram:<id>`, e.g. `telegram:1516648072`) | *Where* to deliver replies — the `sendMessage` target |
+| **Chat ID** | `data/v2.db` (`telegram:<id>`, e.g. `telegram:1234567890`) | *Where* to deliver replies — the `sendMessage` target |
 
 The chat ID was captured during **pairing** (when you sent the 4-digit code to
 the bot) and stored as a messaging group wired to the agent group. Every reply's

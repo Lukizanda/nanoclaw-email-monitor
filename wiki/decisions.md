@@ -2,8 +2,11 @@
 
 > Key decisions made during the design phase, with rationale and trade-offs.
 
-**Last updated:** 2026-06-02
-**Related:** [[overview]], [[architecture]], [[langchain-filter]]
+**Last updated:** 2026-06-03
+**Related:** [[overview]], [[architecture]], [[langchain-filter]], [[gmail-integration-issues]]
+
+> Decisions are kept in history even when superseded (ADR style). Entries marked
+> **⟳ Superseded** were later reversed — the newest decisions are at the bottom.
 
 ---
 
@@ -45,7 +48,13 @@
 
 ---
 
-## Claude Haiku for Classification
+## Claude Haiku for Classification ⟳ Superseded → Ollama
+
+> **Superseded:** Now defaults to **local Ollama `qwen3:8b` with `reasoning=False`**
+> (free, no API key — the user is on Claude Max, which isn't an API key). Haiku is
+> kept as an optional swap via `ANTHROPIC_API_KEY`. The speed gap was closed by
+> disabling qwen3's reasoning monologue (~60s → ~7s/email). See the "Ollama with
+> `reasoning=False`" decision below and [[gmail-integration-issues]] #4.
 
 **Decision:** Use Claude Haiku for both LangChain stages.
 
@@ -74,16 +83,26 @@ not Windows Task Scheduler or a Python polling loop.
 
 **Why Option C:**
 - Architecturally correct — uses NanoClaw as it's designed to be used
-- Agent orchestrates the full flow (fetch → classify → notify) in one session
 - NanoClaw's session DB, delivery adapter, and approval flows all work natively
 - Better learning — understand how NanoClaw scheduling actually works
 
-**What changed:** LangChain is now a Python MCP server the agent calls,
-not a standalone script that writes to inbound.db directly.
+**Still valid** — we still use NanoClaw's scheduler. But two specifics changed:
+- **Cadence:** ~every 5 hours (windowed 6h check), not every 30 min.
+- **The agent no longer "orchestrates the full flow."** It triggers a
+  deterministic script (`check_inbox.ts`) and relays the result — the agent
+  proved unreliable as an orchestrator. See [[gmail-integration-issues]] #6 and
+  the "Orchestration in code" decision below.
 
 ---
 
-## LangChain as MCP Server (not standalone script)
+## LangChain as MCP Server (not standalone script) ⟳ Superseded → HTTP
+
+> **Superseded:** The classifier is still a Python service, but the **agent no
+> longer calls it over MCP**. The deterministic `check_inbox.ts` calls a plain
+> **HTTP `POST /classify`** endpoint instead. MCP is the door for LLM agents;
+> plain HTTP is the door for code, and our orchestrator is code. The
+> `classify_emails` MCP tool still exists but is unused. See [[mcp]] and
+> [[gmail-integration-issues]] #2.
 
 **Decision:** Wrap the LangChain classifier as a Python MCP server the agent calls.
 
@@ -135,3 +154,51 @@ than needed. A simpler script calling Claude API directly would also work.
 - Keeping NanoClaw's architecture intact makes future enhancements easier
 
 **Trade-off:** Heavier setup (Docker Desktop install, image build time).
+
+---
+
+## Orchestration in code, not in the agent  *(2026-06-03)*
+
+**Decision:** Move the entire email procedure — search, window, classify-call,
+label, dedup — out of the LLM agent and into a deterministic script
+(`check_inbox.ts`). The agent only *runs* the script and *relays* the result.
+
+**Why:** The agent repeatedly refused to follow a fixed multi-step procedure even
+with explicit "Hard rules" and a fresh session — it re-classified the whole
+inbox, skipped the dedup label, made multiple calls, and once just claimed the
+tools were "disconnected." LLM agents are reliable at *judgment* and *running an
+explicit command*, and unreliable at *being a state machine*. (We even removed
+the gmail/classifier MCP tools — `mcpServers: {}` — so there's nothing to
+improvise with.) See [[gmail-integration-issues]] #6.
+
+**Trade-off:** The agent can no longer do ad-hoc email actions (read/draft a
+specific message) — those tools are gone. Re-add a gmail server if needed.
+
+---
+
+## Windowed check, not a backlog drain  *(2026-06-03)*
+
+**Decision:** Only look at unread mail from the last ~6 hours (`after:<epoch>`),
+on a ~5h schedule, with a `BooTuna/seen` label purely to dedup the overlap.
+Ignore older mail entirely.
+
+**Alternatives considered:** a bounded "drain" that chewed through the whole
+unread backlog a few at a time (built, then dropped).
+
+**Why:** The actual goal is "tell me about important *new* mail," not "review the
+whole inbox." A 100+ email backlog would take hours to drain and delay the mail
+that actually matters. "Review everything" and "monitor what's new" are different
+systems — we picked the one that matches the goal. See [[gmail-integration-issues]] #10.
+
+---
+
+## Ollama with `reasoning=False`, staying free  *(2026-06-03)*
+
+**Decision:** Keep classification on local Ollama `qwen3:8b`, but disable the
+reasoning monologue (`reasoning=False` → Ollama `think:false`).
+
+**Why:** `qwen3` is a reasoning model; for a simple labelling task its hidden
+`<think>` block was ~all the latency (~60s/email on partial-CPU). Disabling it
+dropped to ~7s/email — fast enough to stay free and local instead of paying for
+Haiku. Also a correctness win: short classify calls don't outlive their
+connection. See [[gmail-integration-issues]] #2, #4.
