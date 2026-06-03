@@ -116,9 +116,14 @@ Full detail + diagram: `wiki/architecture.md` and `email-monitor-system.excalidr
 - [x] LangChain classifier (Ollama `reasoning=False`) + `/classify` HTTP endpoint
 - [x] `check_inbox.ts` — windowed, label-dedup; **verified via `docker exec`**
 - [x] Poll-loop wedge fix (warm containers no longer go deaf on `/clear`)
-- [ ] **Wire the recurring schedule (every 5h)** ← next
-- [ ] Confirm the agent reliably runs the script on a scheduled wake (else have the
-      script self-deliver via `outbound.db`, removing the agent from the loop)
+- [x] **Recurring schedule wired (option B)** — `kind=task`, cron `0 */5 * * *`,
+      Asia/Singapore, prompt = explicit `bun check_inbox.ts` command. Verified
+      end-to-end (2026-06-03): fired → fresh container → agent ran the script →
+      found 1 important of 7 → delivered to Telegram → recurrence advanced to the
+      next slot (no re-fire). Fires at 00/05/10/15/20:00 SGT.
+- [~] Confirm reliability over many firings. One firing succeeded; if a future
+      scheduled run ever fails to execute the script, escalate to **self-deliver**
+      (script writes `outbound.db` directly) or option A (agent-free pre-task hook).
 - [ ] Additional family members (Wife, Kids) — repeat the agent-group pattern
 
 ---
