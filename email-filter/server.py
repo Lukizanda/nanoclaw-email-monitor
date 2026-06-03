@@ -52,19 +52,34 @@ mcp = FastMCP(
 )
 
 
+# Safety backstop: cap how many emails one call will classify. The local
+# Ollama model is slow (~5-10s/email), so an unbounded batch (e.g. a whole
+# unread backlog) can grind for many minutes and stall the agent. The agent
+# is instructed to cap at 15; this is defense-in-depth against over-fetching.
+MAX_EMAILS_PER_CALL = int(os.environ.get("EMAIL_FILTER_MAX_BATCH", "15"))
+
+
 @mcp.tool()
-def classify_emails(emails: list[dict]) -> list[dict]:
+def classify_emails(emails: list[dict]) -> dict:
     """
     Classify a list of emails for importance and required action.
 
     Each email dict must have: sender (str), subject (str), body_preview (str).
+    At most 15 emails are classified per call (the first 15 if more are sent);
+    pass fewer and call again for the rest.
 
-    Returns only important emails, each with added fields:
-    - action_type: payment | meeting | job | reply | urgent
-    - summary: 2-3 sentence description of what action is needed
-    - urgency: high | medium | low
+    Returns a dict:
+    - important: list of important emails, each with action_type, summary, urgency
+    - classified: how many emails were actually classified
+    - skipped: how many were dropped by the per-call cap (classify next call)
     """
-    return run_pipeline(emails, stage1_chain, stage2_chain)
+    capped = emails[:MAX_EMAILS_PER_CALL]
+    important = run_pipeline(capped, stage1_chain, stage2_chain)
+    return {
+        "important": important,
+        "classified": len(capped),
+        "skipped": max(0, len(emails) - len(capped)),
+    }
 
 
 if __name__ == "__main__":

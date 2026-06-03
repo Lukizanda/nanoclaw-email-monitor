@@ -158,11 +158,20 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     // provider natively handles slash commands), others get XML.
     const prompt = formatMessagesWithCommands(keep, config.provider.supportsNativeSlashCommands);
 
-    log(`Processing ${keep.length} message(s), kinds: ${[...new Set(keep.map((m) => m.kind))].join(',')}`);
+    // Scheduled task batches run in a FRESH session, not the resumed
+    // interactive one. A poll ("check the last 2 min, classify, notify") is
+    // stateless — resuming the long-lived chat session drags in a large,
+    // irrelevant transcript that makes the agent slow and erratic (it ignored
+    // the scope and over-classified). Persistent per-group context lives in
+    // CLAUDE.local.md (mounted), not the session, so nothing is lost. The
+    // interactive continuation is left untouched so chat keeps its memory.
+    const isTaskBatch = keep.length > 0 && keep.every((m) => m.kind === 'task');
+
+    log(`Processing ${keep.length} message(s), kinds: ${[...new Set(keep.map((m) => m.kind))].join(',')}${isTaskBatch ? ' [fresh session]' : ''}`);
 
     const query = config.provider.query({
       prompt,
-      continuation,
+      continuation: isTaskBatch ? undefined : continuation,
       cwd: config.cwd,
       systemContext: config.systemContext,
     });
@@ -171,8 +180,11 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     const skippedSet = new Set(skipped);
     const processingIds = ids.filter((id) => !commandIds.includes(id) && !skippedSet.has(id));
     try {
-      const result = await processQuery(query, routing, processingIds, config.providerName);
-      if (result.continuation && result.continuation !== continuation) {
+      const result = await processQuery(query, routing, processingIds, config.providerName, !isTaskBatch);
+      // Only the interactive session's continuation is persisted. Task runs
+      // are stateless — their session id is discarded so the next chat
+      // message resumes the real conversation, not a one-off poll.
+      if (!isTaskBatch && result.continuation && result.continuation !== continuation) {
         continuation = result.continuation;
         setContinuation(config.providerName, continuation);
       }
@@ -250,6 +262,7 @@ async function processQuery(
   routing: RoutingContext,
   initialBatchIds: string[],
   providerName: string,
+  persistContinuation = true,
 ): Promise<QueryResult> {
   let queryContinuation: string | undefined;
   let done = false;
@@ -323,7 +336,14 @@ async function processQuery(
         // container died between `init` and `result`, the SDK session was
         // effectively orphaned and the next message started a blank
         // Claude session with no prior context.
-        setContinuation(providerName, event.continuation);
+        //
+        // Skipped for stateless task runs (persistContinuation=false): a
+        // scheduled poll's fresh session id must NOT overwrite the
+        // interactive continuation, or the next chat message would resume a
+        // one-off poll instead of the real conversation.
+        if (persistContinuation) {
+          setContinuation(providerName, event.continuation);
+        }
       } else if (event.type === 'result') {
         // A result — with or without text — means the turn is done. Mark
         // the initial batch completed now so the host sweep doesn't see
