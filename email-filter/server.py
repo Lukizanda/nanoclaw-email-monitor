@@ -47,6 +47,8 @@ mcp = FastMCP(
         "Call classify_emails with a list of email dicts. "
         "Returns only emails that require personal attention, with action type and summary."
     ),
+    host=HOST,
+    port=PORT,
 )
 
 
@@ -68,4 +70,4 @@ def classify_emails(emails: list[dict]) -> list[dict]:
 if __name__ == "__main__":
     print(f"Starting email classifier MCP server on {HOST}:{PORT}")
     print("Docker containers can reach this at: http://host.docker.internal:8765/sse")
-    mcp.run(transport="sse", host=HOST, port=PORT)
+    mcp.run(transport="sse")

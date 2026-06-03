@@ -39,3 +39,7 @@ groups/*
 .nanoclaw/
 
 agents-sdk-docs
+
+# Python bytecode cache
+__pycache__/
+*.pyc

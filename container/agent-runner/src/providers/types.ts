@@ -49,11 +49,21 @@ export interface QueryInput {
   };
 }
 
-export interface McpServerConfig {
+/** Stdio MCP server — spawned as a subprocess inside the container. */
+export interface McpStdioServerConfig {
   command: string;
   args: string[];
   env: Record<string, string>;
 }
+
+/** Remote MCP server reached over the network (SSE or streamable HTTP). */
+export interface McpRemoteServerConfig {
+  type: 'sse' | 'http';
+  url: string;
+  headers?: Record<string, string>;
+}
+
+export type McpServerConfig = McpStdioServerConfig | McpRemoteServerConfig;
 
 export interface AgentQuery {
   /** Push a follow-up message into the active query. */

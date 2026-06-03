@@ -126,6 +126,10 @@ Docker containers can reach this at: http://host.docker.internal:8765/sse
 The server must be running **before** any agent tries to call `classify_emails`.
 It stays running permanently alongside NanoClaw.
 
+Note: host/port are set on the `FastMCP(...)` constructor (`host=`, `port=`),
+not on `mcp.run()` — the installed `mcp` SDK's `run(transport="sse")` takes no
+host/port kwargs.
+
 ## Model Selection
 
 The server picks its model based on what's available:
@@ -142,21 +146,41 @@ EMAIL_FILTER_MODEL=llama3.2:3b
 
 ## Wiring to NanoClaw Agent Group
 
-For a Docker container to call our MCP server, the agent group config must
-register it as an available tool. This is done via OneCLI after the server
-is running:
+MCP servers are registered per agent group in `groups/<folder>/container.json`
+under `mcpServers`. The agent-runner reads this and passes it to the Claude
+Agent SDK at query time.
 
-```bash
-onecli agents add-mcp-server \
-  --id <agent-id> \
-  --name email-classifier \
-  --url http://host.docker.internal:8765/sse
+```jsonc
+// groups/dm-with-alex-emailmonitor/container.json
+{
+  "mcpServers": {
+    "email-classifier": {
+      "type": "sse",
+      "url": "http://host.docker.internal:8765/sse"
+    }
+  }
+}
 ```
 
-Or via the OneCLI web UI at `http://127.0.0.1:10254`.
+`host.docker.internal` lets the container reach the Python server running on the
+host. The agent sees `classify_emails` in its tool list automatically (from the
+tool's docstring + schema).
 
-Once registered, Claude automatically sees `classify_emails` in its tool list
-and knows how to call it from the docstring and schema.
+### Gotcha: agent-runner needed an SSE/HTTP patch
+
+Trunk's agent-runner narrowed its `McpServerConfig` to **stdio only**
+(`{command, args, env}`) — it spawns MCP servers as subprocesses *inside* the
+container. Our classifier runs on the *host* (where Ollama + LangChain live),
+reachable only over the network. The underlying Claude Agent SDK already
+supports `type: 'sse'` / `type: 'http'`, so we widened the agent-runner to pass
+remote configs through:
+
+- `container/agent-runner/src/providers/types.ts` — `McpServerConfig` is now a
+  union of `McpStdioServerConfig | McpRemoteServerConfig`
+- `container/agent-runner/src/config.ts` — uses the shared type
+- `container/agent-runner/src/index.ts` — passes remote configs through to the SDK
+
+This is a fork-level change (NanoClaw's philosophy: customize via code).
 
 ## Why a Separate MCP Server vs Built-in Tool
 

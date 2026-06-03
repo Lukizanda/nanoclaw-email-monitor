@@ -61,7 +61,11 @@ Write-Host "`n[3/3] Starting NanoClaw host..." -ForegroundColor Yellow
 $LogDir = Join-Path $ProjectRoot "logs"
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out-Null }
 
-Start-Process -FilePath "pnpm" -ArgumentList "run", "dev" `
+# pnpm is a .cmd shim on Windows — Start-Process needs the resolved .cmd path,
+# not the bare name (which fails with "not a valid Win32 application").
+$pnpmCmd = (Get-Command pnpm.cmd -ErrorAction SilentlyContinue).Source
+if (-not $pnpmCmd) { $pnpmCmd = "pnpm.cmd" }
+Start-Process -FilePath $pnpmCmd -ArgumentList "run", "dev" `
     -WorkingDirectory $ProjectRoot `
     -WindowStyle Hidden `
     -RedirectStandardOutput (Join-Path $LogDir "nanoclaw.log") `
