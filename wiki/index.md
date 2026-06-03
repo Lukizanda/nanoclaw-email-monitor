@@ -3,7 +3,7 @@
 Catalog of all pages. Updated on every session.
 
 **Last updated:** 2026-06-02
-**Total pages:** 10
+**Total pages:** 12
 
 ---
 
@@ -29,6 +29,7 @@ Catalog of all pages. Updated on every session.
 
 | Page | Summary |
 |------|---------|
+| [[running]] | Startup runbook — the 4 services, start order, health checks, log locations, debugging |
 | [[windows-setup-issues]] | Every problem hit on Windows (CRLF, Docker, WSL, pnpm, stale containers) and its fix |
 
 ## Meta
