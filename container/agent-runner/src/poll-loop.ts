@@ -253,6 +253,10 @@ async function processQuery(
 ): Promise<QueryResult> {
   let queryContinuation: string | undefined;
   let done = false;
+  // Once we've asked the active query to end (to let a pending scheduled task
+  // run as a fresh turn), don't keep calling end() every poll tick while the
+  // SDK winds the current turn down — it just spams the log.
+  let endedForTask = false;
 
   // Concurrent polling: push follow-ups into the active query as they arrive.
   // We do NOT force-end the stream on silence — keeping the query open is
@@ -275,15 +279,34 @@ async function processQuery(
       if ((m.kind === 'chat' || m.kind === 'chat-sdk') && isClearCommand(m)) return false;
       return true;
     });
-    if (newMessages.length > 0) {
-      const newIds = newMessages.map((m) => m.id);
+    if (newMessages.length === 0) return;
+
+    // Scheduled tasks (kind='task') must NOT be absorbed as fire-and-forget
+    // follow-up pushes. The push path marks them completed immediately
+    // (below), which for a periodic task means the recurrence advances even
+    // though the agent never actually ran the routine in this already-active
+    // turn. Leave task rows pending and end the current query so the main
+    // loop picks them up as a fresh, awaited query that runs to completion.
+    // Interactive chat follow-ups still push into the live turn as before.
+    const followUps = newMessages.filter((m) => m.kind !== 'task');
+    const hasPendingTask = newMessages.some((m) => m.kind === 'task');
+
+    if (followUps.length > 0) {
+      const newIds = followUps.map((m) => m.id);
       markProcessing(newIds);
 
-      const prompt = formatMessages(newMessages);
-      log(`Pushing ${newMessages.length} follow-up message(s) into active query`);
+      const prompt = formatMessages(followUps);
+      log(`Pushing ${followUps.length} follow-up message(s) into active query`);
       query.push(prompt);
 
       markCompleted(newIds);
+    }
+
+    if (hasPendingTask && !endedForTask) {
+      // Don't markProcessing — leave the task pending for the main loop.
+      endedForTask = true;
+      log('Scheduled task pending — ending active query so it runs as a fresh turn');
+      query.end();
     }
   }, ACTIVE_POLL_INTERVAL_MS);
 
