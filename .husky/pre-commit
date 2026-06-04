@@ -1,1 +1,12 @@
-pnpm run format:fix
+# Prettier on commit is disabled.
+#
+# It ran `prettier --write "src/**/*.ts"` across the WHOLE src tree on every
+# commit and rewrote CRLF->LF. Since the repo blobs are CRLF and this is a
+# Windows checkout, that left ~108 unstaged files dirty after each commit
+# (pure line-ending churn, no real diff), forcing a `git restore -- src/`
+# every time. Upstream maintainers don't hit this (LF-native macOS/Linux).
+#
+# To re-enable, restore the single line below:
+#   pnpm run format:fix
+#
+# To format manually when you want it: `pnpm run format`
