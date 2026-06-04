@@ -1,15 +1,20 @@
 """
-LangChain Email Classifier — MCP Server
+LangChain Email Classifier — FastMCP server (HTTP + legacy MCP)
 
-Exposes a single MCP tool: classify_emails
-Runs as an SSE server on port 8765 so NanoClaw Docker containers can reach it
-via host.docker.internal:8765 (Windows/Mac Docker Desktop).
+LIVE PATH: a plain-HTTP `POST /classify` endpoint (FastMCP `custom_route`),
+called by the container-side orchestrator `check_inbox.ts`. This is what the
+email monitor actually uses today.
+
+LEGACY (retired): a `classify_emails` MCP tool over SSE at `/sse`. It still
+exists below but nothing calls it — the agent no longer reaches the classifier
+as an MCP tool (the agent group's container.json has `mcpServers: {}`). Kept for
+reference / the test_client.py smoke test. See wiki/mcp.md for why we moved off it.
+
+Runs on port 8765 so NanoClaw Docker containers can reach it via
+host.docker.internal:8765 (Windows/Mac Docker Desktop).
 
 Start:
     python server.py
-
-The agent group config should point to:
-    http://host.docker.internal:8765/sse
 """
 
 import os
@@ -87,11 +92,12 @@ def classify_emails(emails: list[dict]) -> dict:
 @mcp.custom_route("/classify", methods=["POST"])
 async def classify_http(request: Request) -> JSONResponse:
     """
-    Plain-HTTP twin of the classify_emails MCP tool.
+    The LIVE classification path (plain-HTTP twin of the legacy classify_emails
+    MCP tool).
 
-    Lets a deterministic orchestrator (the container-side drain_inbox script)
-    POST a batch of emails and get the importance verdict back as JSON, without
-    speaking MCP. Body: {"emails": [{sender, subject, body_preview}, ...]}.
+    Lets the container-side orchestrator (`check_inbox.ts`) POST a batch of
+    emails and get the importance verdict back as JSON, without speaking MCP.
+    Body: {"emails": [{sender, subject, body_preview}, ...]}.
     Same per-call cap and return shape as classify_emails.
     """
     body = await request.json()

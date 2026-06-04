@@ -181,3 +181,38 @@ agent group's *current active* session (looks up agent group by stable `folder`,
 `insertTask` with cron). Wired into `start-all.ps1` as step [4/4] so every
 startup re-asserts the schedule. Verified both idempotent (no-op) and seed
 (delete → re-create) paths. **Pages created:** schedule-durability.
+
+---
+
+## [2026-06-04] maintenance | Disabled prettier hook + doc-state cleanup
+
+**Type:** session
+**Summary:** Fixed the recurring prettier-on-commit churn, then audited and
+synced the docs (README + wiki + code comments) to the current implementation.
+
+**What happened:**
+- **Prettier pre-commit hook disabled.** Root cause traced: the husky
+  `pre-commit` ran `prettier --write "src/**/*.ts"` across the whole tree on
+  every commit and rewrote CRLF→LF. Repo blobs are CRLF and this is a Windows
+  checkout, so it left ~108 unstaged files dirty after each commit (pure
+  line-ending churn, zero real content diff — `git diff --numstat` summed to 0),
+  forcing a `git restore -- src/` every time. Upstream maintainers (LF-native
+  macOS/Linux) never hit it. Neutered `.husky/pre-commit`; `pnpm run format`
+  still available on demand. Committed `e0dd8a5`.
+- **Doc-state cleanup.** Audited README + all 16 wiki pages against current
+  reality. Most of the wiki was already current from the redesign sync; fixed
+  the stragglers that still described the old model:
+  - **README.md** — rewrote: classifier is HTTP `/classify` (not "MCP classifier"
+    over SSE), added the deterministic `check_inbox.ts` orchestrator + schedule
+    sections, status now "working and autonomous" (schedule verified, not "in
+    progress"), points at `EMAIL_MONITOR_PLAN_V2.md`.
+  - **overview.md** — Phase 6 marked complete (schedule wired/verified); plan V1
+    noted as superseded.
+  - **running.md** — "four services" reconciled (Docker+Ollama prerequisites;
+    start-all manages OneCLI/classifier/host + the ensure-schedule re-seed [4/4]).
+  - **onecli.md** — Gmail token is live (not "Phase 3 future").
+  - **server.py / test_client.py** — docstrings: live path is `/classify` HTTP;
+    `classify_emails` MCP/SSE marked retired; fixed stale `drain_inbox` name →
+    `check_inbox.ts`.
+
+**Pages updated:** README, overview, running, onecli, index, log.

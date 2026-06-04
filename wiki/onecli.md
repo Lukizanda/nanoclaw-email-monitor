@@ -3,8 +3,8 @@
 > Credential vault and API proxy for NanoClaw agent containers — agents make API
 > calls through it without ever seeing raw credentials.
 
-**Last updated:** 2026-06-02
-**Related:** [[nanoclaw]], [[architecture]], [[decisions]]
+**Last updated:** 2026-06-04
+**Related:** [[nanoclaw]], [[architecture]], [[decisions]], [[gmail-integration-issues]]
 
 ## What It Is
 
@@ -106,8 +106,12 @@ Mode options:
 | Secret name | Type | Host pattern | Used for |
 |-------------|------|-------------|---------|
 | Anthropic | anthropic | api.anthropic.com | Claude agent containers |
+| Gmail | google-oauth | gmail.googleapis.com | `check_inbox.ts` REST calls (token injected at request time) |
 
-Gmail OAuth tokens will be added per family member during Phase 3 (Gmail setup).
+Alex's Gmail token is registered and live — `check_inbox.ts` fetches the inbox
+via REST through the OneCLI proxy (`Authorization: Bearer onecli-managed`, the
+gateway swaps in the real token). Additional family members' tokens get added as
+they're onboarded (Phase 7).
 
 ## How NanoClaw Uses OneCLI
 

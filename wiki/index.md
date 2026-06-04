@@ -2,7 +2,7 @@
 
 Catalog of all pages. Updated on every session.
 
-**Last updated:** 2026-06-03
+**Last updated:** 2026-06-04
 **Total pages:** 16
 
 ---
@@ -23,7 +23,7 @@ Catalog of all pages. Updated on every session.
 | [[nanoclaw]] | NanoClaw platform — host, entity model, two-DB session split, key files |
 | [[onecli]] | OneCLI credential vault — architecture, CLI commands, secret modes, gotchas |
 | [[mcp]] | Model Context Protocol — what it is, FastMCP, our custom classifier server, wiring |
-| [[langchain-filter]] | Python LangChain MCP server — LCEL chains, two-stage classification, model fallback |
+| [[langchain-filter]] | Python LangChain classifier — LCEL chains, two-stage classification, served over HTTP (`/classify`; MCP retired), model fallback |
 | [[email-classification]] | Classification criteria, prompts, notification format, edge cases |
 | [[telegram-flow]] | How Telegram messaging works — long polling, outbound-only, chat ID, polling vs webhooks |
 

@@ -3,24 +3,27 @@
 > What has to be running, in what order, how to start it, how to verify it, and
 > how to debug a failed startup. Read this first when "nothing responds."
 
-**Last updated:** 2026-06-03
-**Related:** [[onecli]], [[mcp]], [[windows-setup-issues]], [[architecture]]
+**Last updated:** 2026-06-04
+**Related:** [[onecli]], [[mcp]], [[windows-setup-issues]], [[architecture]], [[schedule-durability]]
 
-## The four services
+## The services
 
-The email monitor needs **four** things running on the host. They have a
-dependency order — start them top to bottom.
+Two **prerequisites** (Docker + Ollama, normally already running on login) plus
+**three services** that `start-all.ps1` manages, and a final **re-seed step**.
+They have a dependency order — start them top to bottom.
 
 | # | Service | What it is | Port(s) | Must start after |
 |---|---------|-----------|---------|------------------|
-| 1 | **Docker Desktop** | Container runtime | — | (boot) |
-| 2 | **Ollama** | Local model for classification (`qwen3:8b`) | 11434 | — |
-| 3 | **OneCLI** | Credential vault (runs in Docker) | 10254 (UI), 10255 (gateway) | Docker |
-| 4 | **MCP classifier** | Python LangChain server (`email-filter/server.py`) | 8765 | Ollama |
-| 5 | **NanoClaw host** | Node orchestrator (`pnpm run dev`) | 3000 (webhook) | Docker, OneCLI |
+| — | **Docker Desktop** | Container runtime (prerequisite) | — | (boot) |
+| — | **Ollama** | Local model for classification (`qwen3:8b`) (prerequisite) | 11434 | — |
+| 1 | **OneCLI** | Credential vault (runs in Docker) | 10254 (UI), 10255 (gateway) | Docker |
+| 2 | **LangChain classifier** | Python server (`email-filter/server.py`) — serves `POST /classify` | 8765 | Ollama |
+| 3 | **NanoClaw host** | Node orchestrator (`pnpm run dev`) | 3000 (webhook) | Docker, OneCLI |
+| 4 | **Schedule re-seed** | `scripts/ensure-schedule.ts` — idempotently re-asserts the 5h recurring check | — | NanoClaw host |
 
 NanoClaw spawns the per-agent **Docker containers** on demand — you don't start
-those yourself.
+those yourself. Step 4 is a one-shot (not a long-running service); see
+[[schedule-durability]].
 
 ## Quick start (after a reboot)
 
@@ -29,8 +32,10 @@ cd C:\ClaudeSandbox\nanoclaw-investigate
 .\scripts\start-all.ps1
 ```
 
-This starts OneCLI → MCP server → NanoClaw host (Docker + Ollama are assumed
-already running — Docker Desktop and Ollama auto-start on login by default).
+This starts OneCLI → LangChain classifier → NanoClaw host → schedule re-seed
+(`ensure-schedule.ts`, step [4/4], runs ~6s after the host so the DB is ready).
+Docker + Ollama are assumed already running — Docker Desktop and Ollama auto-start
+on login by default.
 
 Stop everything:
 ```powershell
@@ -63,7 +68,7 @@ Verify both containers are healthy:
 docker ps --filter "name=onecli" --format "{{.Names}} {{.Status}}"
 ```
 
-### 4. MCP classifier (LangChain)
+### 4. LangChain classifier (serves `POST /classify`)
 ```powershell
 cd C:\ClaudeSandbox\nanoclaw-investigate\email-filter
 python server.py

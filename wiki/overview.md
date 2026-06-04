@@ -3,8 +3,8 @@
 > A self-hosted, multi-user email monitoring agent that watches Gmail inboxes and
 > sends Telegram notifications when emails require personal attention.
 
-**Last updated:** 2026-06-03
-**Related:** [[architecture]], [[decisions]], [[email-classification]], [[gmail-integration-issues]]
+**Last updated:** 2026-06-04
+**Related:** [[architecture]], [[decisions]], [[email-classification]], [[gmail-integration-issues]], [[schedule-durability]], [[email-monitor-trigger-flow]]
 
 ## Goal
 
@@ -42,22 +42,27 @@ See [[email-classification]] for the full prompt design.
 
 ## Current Status
 
-**Working end-to-end for Alex, via the deterministic `check_inbox.ts` path.**
-The full chain is built and verified by running the script in-container.
+**Working and autonomous for Alex, via the deterministic `check_inbox.ts` path.**
+The full chain is verified end-to-end through the scheduled 5-hour wake (not just
+manual `docker exec`): the recurring task fires → fresh container → agent runs the
+script → important mail delivered to Telegram.
 
 - [x] Phase 1 — Foundation (pnpm, .env, container image, first run)
 - [x] Phase 2 — OneCLI credential vault (Anthropic + Gmail tokens)
 - [x] Phase 3 — Gmail access (now via REST through the OneCLI proxy, not gmail-mcp)
 - [x] Phase 4 — Telegram channel (BooTunaBot, paired DM)
 - [x] Phase 5 — Classification + `check_inbox.ts` orchestration (windowed, label-dedup)
-- [~] Phase 6 — Testing / tuning: script verified via `docker exec`; **still to do:**
-      wire the every-5h schedule and confirm the agent runs it reliably
+- [x] Phase 6 — Scheduling: every-5h recurring `kind=task` wired and verified
+      end-to-end (cron `0 */5 * * *`, Asia/Singapore); durability via
+      `ensure-schedule.ts` re-seed in `start-all.ps1`. See [[schedule-durability]]
+      and [[email-monitor-trigger-flow]]. Only open item: a script self-deliver
+      fallback if the agent ever narrates instead of running the command.
 - [ ] Phase 7 — Additional family members (Wife, Kids)
 
 **Key architecture note:** orchestration was moved out of the LLM agent and into
 `check_inbox.ts` after the agent proved an unreliable orchestrator — see
-[[gmail-integration-issues]] for the full story. `EMAIL_MONITOR_PLAN.md` predates
-this pivot.
+[[gmail-integration-issues]] for the full story. `EMAIL_MONITOR_PLAN.md` (V1)
+predates this pivot and is superseded by `EMAIL_MONITOR_PLAN_V2.md` (the current plan).
 
 ## Why NanoClaw
 

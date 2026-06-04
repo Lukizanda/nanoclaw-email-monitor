@@ -1,4 +1,9 @@
-"""Quick end-to-end test of the classify_emails MCP tool over SSE."""
+"""Quick end-to-end test of the classify_emails MCP tool over SSE.
+
+NOTE: this exercises the LEGACY MCP/SSE path, which is retired — the live
+monitor calls the `POST /classify` HTTP endpoint via check_inbox.ts, not this
+tool. Kept as a smoke test that the FastMCP server + LCEL + Ollama chain works.
+"""
 import asyncio
 from mcp import ClientSession
 from mcp.client.sse import sse_client
