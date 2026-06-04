@@ -11,7 +11,9 @@ store/
 data/
 logs/
 
-# Groups - per-installation state, not tracked
+# Groups - per-installation state, not tracked.
+# Hand-written source files (e.g. check_inbox.ts) are force-added via
+# `git add -f` so they stay tracked regardless of this rule.
 groups/*
 
 # Composer-managed CLAUDE.md artifacts (regenerated every spawn) and
