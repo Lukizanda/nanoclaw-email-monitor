@@ -5,6 +5,7 @@ export {
   initTestSessionDb,
   closeSessionDb,
   touchHeartbeat,
+  touchWorking,
   clearStaleProcessingAcks,
 } from './connection.js';
 export {

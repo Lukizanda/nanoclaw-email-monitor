@@ -1,7 +1,7 @@
 import { findByName, getAllDestinations, type DestinationEntry } from './destinations.js';
 import { getPendingMessages, markProcessing, markCompleted, type MessageInRow } from './db/messages-in.js';
 import { writeMessageOut } from './db/messages-out.js';
-import { touchHeartbeat, clearStaleProcessingAcks } from './db/connection.js';
+import { touchHeartbeat, touchWorking, clearStaleProcessingAcks } from './db/connection.js';
 import {
   clearContinuation,
   migrateLegacyContinuation,
@@ -332,6 +332,12 @@ async function processQuery(
     for await (const event of query.events) {
       handleEvent(event, routing);
       touchHeartbeat();
+      // Real provider event => the agent is actively working this turn. Touch
+      // the working signal so the host shows typing. The idle poll interval
+      // (above) deliberately does NOT touch this — so when the turn ends and
+      // the query is kept open for follow-ups, .working goes stale and typing
+      // stops, while .heartbeat stays fresh to keep the container alive.
+      touchWorking();
 
       if (event.type === 'init') {
         queryContinuation = event.continuation;

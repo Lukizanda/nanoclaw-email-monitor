@@ -19,7 +19,7 @@
  */
 import fs from 'fs';
 
-import { heartbeatPath } from '../../session-manager.js';
+import { workingPath } from '../../session-manager.js';
 
 const TYPING_REFRESH_MS = 4000;
 /**
@@ -80,10 +80,14 @@ async function triggerTyping(channelType: string, platformId: string, threadId: 
   }
 }
 
-function isHeartbeatFresh(agentGroupId: string, sessionId: string): boolean {
-  const hbPath = heartbeatPath(agentGroupId, sessionId);
+// Gates typing on the container's `.working` signal, which is touched ONLY
+// while the agent is actively streaming events — not on `.heartbeat`, which
+// stays fresh for the whole life of an open-but-idle query and would keep
+// typing on indefinitely between turns.
+function isAgentWorking(agentGroupId: string, sessionId: string): boolean {
+  const wPath = workingPath(agentGroupId, sessionId);
   try {
-    const stat = fs.statSync(hbPath);
+    const stat = fs.statSync(wPath);
     return Date.now() - stat.mtimeMs < HEARTBEAT_FRESH_MS;
   } catch {
     return false;
@@ -123,12 +127,12 @@ export function startTypingRefresh(
     if (entry.pausedUntil > Date.now()) return;
 
     const withinGrace = Date.now() - entry.startedAt < TYPING_GRACE_MS;
-    if (withinGrace || isHeartbeatFresh(entry.agentGroupId, sessionId)) {
+    if (withinGrace || isAgentWorking(entry.agentGroupId, sessionId)) {
       triggerTyping(entry.channelType, entry.platformId, entry.threadId).catch(() => {});
       return;
     }
 
-    // Out of grace AND heartbeat stale — agent is idle, stop refreshing.
+    // Out of grace AND not actively working — agent is idle, stop refreshing.
     clearInterval(entry.interval);
     typingRefreshers.delete(sessionId);
   }, TYPING_REFRESH_MS);

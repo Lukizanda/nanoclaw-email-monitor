@@ -23,10 +23,12 @@ import fs from 'fs';
 const DEFAULT_INBOUND_PATH = '/workspace/inbound.db';
 const DEFAULT_OUTBOUND_PATH = '/workspace/outbound.db';
 const DEFAULT_HEARTBEAT_PATH = '/workspace/.heartbeat';
+const DEFAULT_WORKING_PATH = '/workspace/.working';
 
 let _inbound: Database | null = null;
 let _outbound: Database | null = null;
 let _heartbeatPath: string = DEFAULT_HEARTBEAT_PATH;
+let _workingPath: string = DEFAULT_WORKING_PATH;
 
 /** Inbound DB — container opens read-only (host is the sole writer). */
 export function getInboundDb(): Database {
@@ -121,6 +123,32 @@ export function clearContainerToolInFlight(): void {
  */
 export function touchHeartbeat(): void {
   const p = _heartbeatPath;
+  const now = new Date();
+  try {
+    fs.utimesSync(p, now, now);
+  } catch {
+    try {
+      fs.writeFileSync(p, '');
+    } catch {
+      // Silently ignore — parent dir may not exist (e.g., in-memory test DBs)
+    }
+  }
+}
+
+/**
+ * Touch the "working" file — signals the agent is ACTIVELY streaming events
+ * (mid-turn), as distinct from `.heartbeat`, which signals only that the
+ * container is alive. The host's typing module gates on THIS file, so the
+ * typing indicator reflects real work rather than an idle-but-open query.
+ *
+ * Touched ONLY from the event loop (on real provider events), never from the
+ * idle poll interval — that's the whole point: when a turn finishes and the
+ * query is kept open for cheap follow-ups, no events fire, so `.working` goes
+ * stale within a few seconds and typing stops, while `.heartbeat` stays fresh
+ * so the host doesn't kill a healthy waiting container.
+ */
+export function touchWorking(): void {
+  const p = _workingPath;
   const now = new Date();
   try {
     fs.utimesSync(p, now, now);

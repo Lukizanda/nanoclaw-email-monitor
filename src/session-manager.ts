@@ -63,6 +63,16 @@ export function heartbeatPath(agentGroupId: string, sessionId: string): string {
 }
 
 /**
+ * Path to the container "working" file — touched by the container ONLY while
+ * actively streaming agent events, unlike `.heartbeat` which stays fresh for
+ * the whole life of an open (even idle) query. The typing module gates on this
+ * so the typing indicator tracks real work, not an idle-but-open query.
+ */
+export function workingPath(agentGroupId: string, sessionId: string): string {
+  return path.join(sessionDir(agentGroupId, sessionId), '.working');
+}
+
+/**
  * @deprecated Use inboundDbPath / outboundDbPath instead.
  * Kept temporarily for test compatibility during migration.
  */

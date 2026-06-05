@@ -216,3 +216,42 @@ synced the docs (README + wiki + code comments) to the current implementation.
     `check_inbox.ts`.
 
 **Pages updated:** README, overview, running, onecli, index, log.
+
+---
+
+## [2026-06-05] debug+fix | Perpetual "typing" indicator — split heartbeat signal
+
+**Type:** session
+**Summary:** BooTuna showed "typing…" on Telegram indefinitely with no message or
+task. Traced it to a 26h warm container holding an idle-but-open query, and fixed
+the root cause: one heartbeat file was being used to mean both "alive" and
+"working."
+
+**What happened:**
+- **Diagnosis (and a corrected hypothesis):** First suspected Telegram `getUpdates`
+  redelivery, but the session DB showed the "burst" of inbound was the user's *real*
+  messages (asking about the typing itself) — not duplicates. The actual cause was
+  host-side typing logic.
+- **Root cause:** the poll-loop keeps the interactive query open after a turn (cheap
+  follow-ups, see [[gmail-integration-issues]] #7) and touches `.heartbeat` every
+  poll tick so an idle container doesn't look dead. The typing module read that same
+  fresh heartbeat as "agent working," so an idle-but-open query typed forever until
+  a `/clear` / scheduled task / kill ended the query. A quiet overnight stretch with
+  no handoff left it typing for hours.
+- **Immediate relief:** killed the wedged 26h container (queue fully drained, no
+  stale `processing_ack` — safe). Heartbeat went stale → typing stopped.
+- **Fix — split the signal:** added a `.working` file touched ONLY in the event loop
+  (real provider events), never from the idle poll interval. Typing now gates on
+  `.working` (real work) while `.heartbeat` still means "alive" (host-sweep). Files:
+  `container/agent-runner/src/db/connection.ts` (+`touchWorking`), `poll-loop.ts`,
+  `db/index.ts`, `src/session-manager.ts` (+`workingPath`), `src/modules/typing/index.ts`.
+  Both typechecks pass.
+- **Deployed:** host rebuilt + restarted (typing fix live); container picks up the
+  mounted source on next fresh spawn (no image rebuild). Full writeup:
+  [[gmail-integration-issues]] #11.
+
+**Verification status:** deployed but not yet observed end-to-end (no new container
+has spawned with the change; Telegram typing can't be observed host-side). Confirm
+by messaging BooTuna — typing should clear shortly after each reply.
+
+**Pages updated:** gmail-integration-issues (#11), log.

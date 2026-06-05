@@ -5,7 +5,7 @@
 > setup-time problems (OAuth, Docker, WSL) live in [[windows-setup-issues]];
 > this page is the *runtime / integration* fights.
 
-**Last updated:** 2026-06-03
+**Last updated:** 2026-06-05
 **Related:** [[mcp]], [[langchain-filter]], [[onecli]], [[nanoclaw]], [[email-classification]], [[decisions]]
 
 ## Context
@@ -230,6 +230,42 @@ to dedup the overlap (6h window vs 5h schedule). Old mail is ignored on purpose.
 **Lesson:** Pin the *actual* requirement before optimising. "Review everything"
 and "monitor what's new" are completely different systems. Requirements can — and
 should — change when the goal becomes clear.
+
+---
+
+## 11. Perpetual "typing" indicator — one heartbeat doing two jobs
+
+**Symptom:** BooTuna showed "typing…" on Telegram **indefinitely** with no message
+and no scheduled task — for hours, even after replying. Killing the container was
+the only relief.
+
+**Cause:** The `.heartbeat` file was overloaded to answer **two different
+questions with one timestamp**: *"is the container alive?"* (host-sweep — should I
+kill it) and *"is the agent working?"* (typing module — should I show typing). The
+poll-loop keeps the interactive query **open** after a turn (cheap follow-ups, see
+#7) and touches the heartbeat every poll tick so a healthy idle container doesn't
+look dead. But the typing module read that same fresh heartbeat as "working," so an
+**idle-but-open query typed forever** — until a `/clear` / scheduled task / kill
+finally ended the query. Normally the 5h task ends it periodically; a quiet stretch
+with no handoff (e.g. overnight) left it typing for hours.
+
+**Fix:** Split the signal. Add a second file, `.working`, touched **only inside the
+event loop** (on real provider events), never from the idle poll interval:
+- `container/agent-runner/src/db/connection.ts` — new `touchWorking()`.
+- `container/agent-runner/src/poll-loop.ts` — call `touchWorking()` only in the
+  `for await (event of query.events)` loop; the `setInterval` poll keeps touching
+  `.heartbeat` only.
+- `src/session-manager.ts` — `workingPath()`; `src/modules/typing/index.ts` — gate
+  typing on `.working` freshness instead of `.heartbeat`.
+
+Now: actively streaming → both fresh (typing on, alive). Idle-but-open query →
+`.working` stale (typing off) but `.heartbeat` fresh (host won't kill). Dead
+container → both stale (host kills). The open-query optimisation from #7 is
+untouched.
+
+**Lesson:** "Alive" and "actively working" are different questions; a timer can
+answer the first, only the event stream can answer the second. Don't let one
+signal stand in for both — give each its own.
 
 ---
 
