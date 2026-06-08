@@ -5,7 +5,7 @@
 > setup-time problems (OAuth, Docker, WSL) live in [[windows-setup-issues]];
 > this page is the *runtime / integration* fights.
 
-**Last updated:** 2026-06-05
+**Last updated:** 2026-06-08
 **Related:** [[mcp]], [[langchain-filter]], [[onecli]], [[nanoclaw]], [[email-classification]], [[decisions]]
 
 ## Context
@@ -266,6 +266,38 @@ untouched.
 **Lesson:** "Alive" and "actively working" are different questions; a timer can
 answer the first, only the event stream can answer the second. Don't let one
 signal stand in for both — give each its own.
+
+---
+
+## 12. Immortal container — scheduled-task query kept open 24/7
+
+**Symptom:** The agent container ran **continuously** (10h+ uptime) holding ~500MB,
+even though the monitor only checks every 5 hours. Memory never released between
+checks.
+
+**Cause:** After a scheduled task completes, the poll-loop kept the query **open**
+(the cheap-follow-ups design, #7/#11). The idle poll interval touches `.heartbeat`
+the whole time a query is open — so across the ~5h gap until the next task, the
+heartbeat was *never* stale. The host's 30-min idle ceiling
+([host-sweep.ts](src/host-sweep.ts) `ABSOLUTE_CEILING_MS`) only kills a container
+whose heartbeat has gone stale — so it **never fired**, and the container lived
+forever, processing each 5h task in the same long-lived process. Keeping a
+container warm for instant follow-ups is the right call for **interactive chat**,
+but pointless for a **5-hourly scheduled monitor** that gets no follow-ups.
+
+**Fix:** End the query when a **scheduled-task** batch finishes
+(`persistContinuation === false`) instead of holding it open
+([poll-loop.ts](container/agent-runner/src/poll-loop.ts), `result` event). The
+container then goes idle → heartbeat goes stale → the 30-min ceiling reaps it → it
+respawns fresh on the next check. Interactive turns still keep their query open for
+cheap follow-ups. Verified: a scheduled check now logs `Task batch complete —
+ending query so the idle container can be reaped`, and `.heartbeat` starts aging
+immediately after the check (was pinned fresh forever before).
+
+**Lesson:** A keep-warm optimization tuned for interactive use is a liability for a
+cron-like workload. Scope it: one-shot scheduled runs should release the container;
+only conversational turns benefit from staying warm. (Same heartbeat-overload root
+as #11 — `.heartbeat` meaning "alive" kept an idle container immortal.)
 
 ---
 

@@ -255,3 +255,33 @@ has spawned with the change; Telegram typing can't be observed host-side). Confi
 by messaging BooTuna — typing should clear shortly after each reply.
 
 **Pages updated:** gmail-integration-issues (#11), log.
+
+---
+
+## [2026-06-08] fix | Immortal container — release scheduled-task containers
+
+**Type:** session
+**Summary:** The agent container ran continuously (10h+, ~500MB) instead of being
+ephemeral per 5-hourly check. Fixed by ending the query after a scheduled-task
+batch so the container goes idle and the host's 30-min ceiling reaps it.
+
+**What happened:**
+- **Symptom:** container `Up 10 hours`, 512MiB, 1.19% CPU — working correctly
+  (handled the 10:00 + 15:00 SGT checks) but never exited.
+- **Cause:** after a scheduled task, the poll-loop keeps the query open (cheap
+  follow-ups). The idle poll interval touches `.heartbeat` while a query is open,
+  so across the ~5h gap the heartbeat never went stale → the host's 30-min idle
+  ceiling never fired → immortal container. Right tradeoff for interactive chat,
+  wrong for a 5-hourly cron.
+- **Fix:** end the query when a scheduled-task batch finishes
+  (`persistContinuation === false`) in `container/agent-runner/src/poll-loop.ts`.
+  Container goes idle → heartbeat stales → ceiling reaps it → respawns on next
+  check. Interactive turns still stay open. Container typecheck passes.
+- **Verified:** triggered an immediate check; fresh container ran `check_inbox.ts`,
+  logged `Task batch complete — ending query so the idle container can be reaped`,
+  and `.heartbeat` began aging right after (was pinned fresh forever before).
+- Also recovered a `processing_ack` poison loop earlier this session (stale
+  `processing` claim on msg :104 killing every fresh container; cleared it and
+  re-seeded the failed recurring task) — the schedule is healthy again.
+
+**Pages updated:** gmail-integration-issues (#12), log.

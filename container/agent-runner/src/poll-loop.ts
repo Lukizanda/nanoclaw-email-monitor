@@ -366,6 +366,20 @@ async function processQuery(
         if (event.text) {
           dispatchResultText(event.text, routing);
         }
+        // Scheduled-task batches (persistContinuation === false) are one-shot:
+        // they won't receive interactive follow-ups, so there's no reason to
+        // hold the query open after the result. Leaving it open kept the poll
+        // interval touching `.heartbeat` for the entire gap until the next task
+        // (e.g. ~5h), which defeated the host's 30-min idle ceiling and left the
+        // container resident 24/7 holding ~500MB. End the query here so the
+        // container goes idle, its heartbeat goes stale, and the host ceiling
+        // reaps it — it respawns fresh on the next scheduled check. Interactive
+        // turns still stay open for cheap follow-up pushes.
+        if (!persistContinuation && !endedForHandoff) {
+          endedForHandoff = true;
+          log('Task batch complete — ending query so the idle container can be reaped');
+          query.end();
+        }
       }
     }
   } finally {
